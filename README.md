@@ -16,6 +16,28 @@ GitHub searches use GitHub's relevance/best-match ordering. README retrieval fai
 per repository: `404` is stored as `missing`, exhausted transient failures are stored as `error`,
 and the rest of the run continues.
 
+### GitHub ingestion limits
+
+RepoScout deliberately limits each synchronous ingestion request to 100 repositories. GitHub's
+[repository search endpoint](https://docs.github.com/en/rest/search/search#search-repositories)
+returns at most 100 results per page, but GitHub can expose up to 1,000 results for one search query
+through pagination. Therefore, 100 is a RepoScout operational safety boundary rather than the total
+number of repositories GitHub permits for a query.
+
+For an authenticated run of 100 repositories, RepoScout normally makes one search request and up
+to 100 separate README requests, with additional requests only when retries are required. GitHub
+currently permits up to 30 authenticated search requests per minute, while authenticated general
+REST requests normally share a 5,000-request-per-hour allowance; see GitHub's
+[search limits](https://docs.github.com/en/rest/search/search#rate-limit) and
+[REST API rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api).
+
+Keep the per-request maximum at 100 for the current synchronous API. The overall Lakebase corpus
+may grow beyond 100 through additional, meaningfully distinct or partitioned searches. Repeating an
+identical best-match query will generally refresh the same leading repositories rather than add a
+new batch. The embedding notebook's `max_repositories` widget is a separate processing-batch limit;
+it does not change the FastAPI ingestion maximum. On constrained Databricks compute, process the
+stored corpus in smaller notebook batches even when a single ingestion collected 100 repositories.
+
 ## Local setup
 
 Prerequisites:
