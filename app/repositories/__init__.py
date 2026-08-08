@@ -1,0 +1,1 @@
+"""Lakebase persistence repositories."""

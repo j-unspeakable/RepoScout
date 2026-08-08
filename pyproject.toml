@@ -1,0 +1,45 @@
+[project]
+name = "reposcout"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.16.0",
+    "asyncer>=0.0.8",
+    "databricks-sdk>=0.89.0",
+    "fastapi[standard]>=0.141.1",
+    "httpx>=0.28.1",
+    "psycopg[binary]>=3.3.0",
+    "psycopg-pool>=3.3.0",
+    "pydantic-settings>=2.10.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.1.0",
+    "ruff>=0.12.0",
+    "ty>=0.0.1a16",
+]
+
+[tool.fastapi]
+entrypoint = "app.main:app"
+
+[tool.pytest.ini_options]
+addopts = "-q"
+asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+extend-exclude = ["notebook"]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "FAST"]
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.src]
+exclude = ["notebook/"]

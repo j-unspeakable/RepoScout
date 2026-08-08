@@ -1,0 +1,8 @@
+command: ["fastapi", "run"]
+env:
+  - name: APP_ENV
+    value: databricks
+  - name: LAKEBASE_ENDPOINT
+    valueFrom: postgres
+  - name: GITHUB_TOKEN
+    valueFrom: github_token
