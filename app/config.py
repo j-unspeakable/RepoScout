@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     llm_api_key: SecretStr | None = None
     llm_model_name: str = Field(default="openrouter/free", min_length=1)
     llm_request_timeout: float = Field(default=45.0, gt=0)
+    llm_max_output_tokens: int = Field(default=2000, ge=600, le=8192)
 
     @model_validator(mode="after")
     def validate_environment_configuration(self) -> "Settings":

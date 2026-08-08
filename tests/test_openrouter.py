@@ -33,7 +33,8 @@ async def test_openrouter_success_uses_chat_completions_contract() -> None:
         body = json.loads(request.content)
         assert body["model"] == "openrouter/free"
         assert body["temperature"] == 0.2
-        assert body["max_tokens"] == 600
+        assert body["max_completion_tokens"] == 2000
+        assert "max_tokens" not in body
         assert body["stream"] is False
         return httpx.Response(
             200,
@@ -158,6 +159,30 @@ async def test_openrouter_never_accepts_partial_or_malformed_completion() -> Non
     malformed = _client(lambda _: httpx.Response(200, json={"choices": []}))
     with pytest.raises(OpenRouterBadGateway):
         await malformed.generate([])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("finish_reason", ["length", "content_filter", None])
+async def test_openrouter_rejects_incomplete_finish_reasons(
+    finish_reason: str | None,
+) -> None:
+    client = _client(
+        lambda _: httpx.Response(
+            200,
+            json={
+                "model": "provider/model",
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "partial answer"},
+                        "finish_reason": finish_reason,
+                    }
+                ],
+            },
+        )
+    )
+
+    with pytest.raises(OpenRouterBadGateway, match="incomplete response"):
+        await client.generate([])
 
 
 @pytest.mark.asyncio

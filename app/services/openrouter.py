@@ -39,6 +39,7 @@ class OpenRouterClient:
         if settings.llm_api_key is None:
             raise ValueError("LLM_API_KEY is required to construct OpenRouterClient")
         self.requested_model = settings.llm_model_name
+        self._max_output_tokens = settings.llm_max_output_tokens
         self._owns_client = client is None
         self._headers = {
             "Authorization": f"Bearer {settings.llm_api_key.get_secret_value()}",
@@ -64,7 +65,7 @@ class OpenRouterClient:
                     "model": self.requested_model,
                     "messages": messages,
                     "temperature": 0.2,
-                    "max_tokens": 600,
+                    "max_completion_tokens": self._max_output_tokens,
                     "stream": False,
                 },
             )
@@ -102,6 +103,9 @@ class OpenRouterClient:
                 self._error_status(choice_error) or response.status_code,
                 retry_after,
             )
+
+        if choice.get("finish_reason") != "stop":
+            raise OpenRouterBadGateway("Generation returned an incomplete response")
 
         message = choice.get("message")
         content = message.get("content") if isinstance(message, dict) else None

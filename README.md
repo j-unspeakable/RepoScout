@@ -84,7 +84,9 @@ Required outside tests: `GITHUB_TOKEN`, `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSE
 
 `LLM_API_KEY` is optional. Without it, semantic search remains available while `/search/ask`
 returns `503` when qualifying evidence would require generation. OpenRouter defaults to
-`https://openrouter.ai/api/v1` and the `openrouter/free` model router.
+`https://openrouter.ai/api/v1` and the `openrouter/free` model router. Generation asks for a concise
+answer while allowing up to `LLM_MAX_OUTPUT_TOKENS=2000` completion tokens so routed reasoning
+models have enough headroom to finish without returning truncated output.
 
 For a Databricks App, attach a Lakebase Autoscaling resource with key `postgres`, secret resources
 with keys `github_token` and `openrouter_api_key`, and use the included `app.yaml`. Databricks

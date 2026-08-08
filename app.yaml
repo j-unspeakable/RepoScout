@@ -19,5 +19,7 @@ env:
     value: "openrouter/free"
   - name: LLM_REQUEST_TIMEOUT
     value: "45"
+  - name: LLM_MAX_OUTPUT_TOKENS
+    value: "2000"
   - name: SEARCH_MIN_SIMILARITY
     value: "0.25"

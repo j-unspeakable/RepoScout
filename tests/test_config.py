@@ -12,6 +12,7 @@ DATABASE_ENVIRONMENT_VARIABLES = (
     "PGUSER",
     "LAKEBASE_ENDPOINT",
     "LLM_API_KEY",
+    "LLM_MAX_OUTPUT_TOKENS",
     "SEARCH_MIN_SIMILARITY",
 )
 
@@ -108,9 +109,13 @@ def test_search_threshold_is_bounded_and_openrouter_key_is_optional() -> None:
     assert settings.search_min_similarity == 0.25
     assert settings.llm_api_key is None
     assert settings.llm_model_name == "openrouter/free"
+    assert settings.llm_max_output_tokens == 2000
 
     with pytest.raises(ValidationError, match="less than or equal to 1"):
         Settings(app_env=AppEnvironment.TEST, search_min_similarity=1.1)
+
+    with pytest.raises(ValidationError, match="greater than or equal to 600"):
+        Settings(app_env=AppEnvironment.TEST, llm_max_output_tokens=599)
 
 
 def test_openrouter_secret_is_redacted_from_settings_representation() -> None:
