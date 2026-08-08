@@ -24,6 +24,10 @@ def test_notebook_uses_spark_for_processing_and_batched_embeddings() -> None:
     assert "@pandas_udf(ArrayType(FloatType()))" in code
     assert "normalize_embeddings=True" in code
     assert "EMBEDDING_DIM = 384" in code
+    assert 'os.environ["HF_HUB_DISABLE_XET"] = "1"' in code
+    assert 'os.environ["HF_XET_CACHE"]' in code
+    assert ".persist(" not in code
+    assert "StorageLevel" not in code
 
 
 def test_notebook_owns_oauth_and_pgvector_persistence_without_app_imports() -> None:
@@ -35,6 +39,9 @@ def test_notebook_owns_oauth_and_pgvector_persistence_without_app_imports() -> N
     assert "toLocalIterator()" in code
     assert "%s::vector" in code
     assert "processing_config_hash" in code
+    assert "import psycopg2" in code
+    assert "with closing(connect_lakebase()) as connection" in code
+    assert "embedded_df.unpersist()" not in code
     assert "app.database" not in code
     assert "LakebaseCredentialProvider" not in code
     assert "dbutils.secrets" not in code
