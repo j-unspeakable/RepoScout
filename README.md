@@ -11,6 +11,10 @@ Lakebase.
   `{"search_query": "fastapi", "max_repositories": 30}`; the limit defaults to 30 and cannot
   exceed 100.
 - `GET /ingestions/{run_id}` — inspect a recorded ingestion run.
+- `POST /search/semantic` — retrieve up to ten distinct repository recommendations using README
+  chunk similarity, with optional language and minimum-star filters.
+- `POST /search/ask` — retrieve repository evidence and ask OpenRouter for a grounded answer that
+  includes the evidence used.
 
 GitHub searches use GitHub's relevance/best-match ordering. README retrieval failures are isolated
 per repository: `404` is stored as `missing`, exhausted transient failures are stored as `error`,
@@ -78,10 +82,56 @@ FastAPI never creates or alters application tables during startup or requests.
 Required outside tests: `GITHUB_TOKEN`, `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGSSLMODE`, and
 `LAKEBASE_ENDPOINT`. Generated database credentials are never configuration values.
 
-For a Databricks App, attach a Lakebase Autoscaling resource with key `postgres`, attach a secret
-resource with key `github_token`, and use the included `app.yaml`. Databricks supplies the `PG*` and
-service-principal variables. Run `uv run alembic upgrade head` explicitly against the target before
-starting a version with new migrations.
+`LLM_API_KEY` is optional. Without it, semantic search remains available while `/search/ask`
+returns `503` when qualifying evidence would require generation. OpenRouter defaults to
+`https://openrouter.ai/api/v1` and the `openrouter/free` model router.
+
+For a Databricks App, attach a Lakebase Autoscaling resource with key `postgres`, secret resources
+with keys `github_token` and `openrouter_api_key`, and use the included `app.yaml`. Databricks
+supplies the `PG*` and service-principal variables. Run `uv run alembic upgrade head` explicitly
+against the target before starting a version with new migrations.
+
+### Databricks App database permissions
+
+`app.yaml` references the `postgres` resource but does not attach it. In the Databricks Apps UI,
+attach the Lakebase Autoscaling database that contains the RepoScout tables, assign it the resource
+key `postgres`, and grant **Can connect and create**. Attaching the resource creates a PostgreSQL
+role whose name is the app service-principal client ID (also exposed to the running app as
+`PGUSER`). Do not create that role manually. If the role is missing, confirm the resource targets
+the correct Lakebase project, branch, endpoint, and database, then redeploy the app.
+
+After the role exists, connect as the RepoScout table owner and replace
+`<APP_SERVICE_PRINCIPAL_CLIENT_ID>` below with that client ID. Keep the double quotes because the
+identifier normally contains hyphens.
+
+```sql
+GRANT USAGE ON SCHEMA public
+TO "<APP_SERVICE_PRINCIPAL_CLIENT_ID>";
+
+GRANT SELECT, INSERT, UPDATE
+ON TABLE
+    public.repositories,
+    public.repository_readmes,
+    public.ingestion_runs
+TO "<APP_SERVICE_PRINCIPAL_CLIENT_ID>";
+
+GRANT SELECT
+ON TABLE public.repository_chunks
+TO "<APP_SERVICE_PRINCIPAL_CLIENT_ID>";
+```
+
+These are the current least-privilege application grants: ingestion can read and upsert Section 1
+records, while semantic retrieval can read repositories and embedded chunks. The FastAPI app does
+not modify `repository_chunks`; the independently run Section 2 notebook owns that persistence.
+Verify the effective table grants with:
+
+```sql
+SELECT grantee, table_name, privilege_type
+FROM information_schema.role_table_grants
+WHERE grantee = '<APP_SERVICE_PRINCIPAL_CLIENT_ID>'
+  AND table_schema = 'public'
+ORDER BY table_name, privilege_type;
+```
 
 ## Lakebase credential rotation
 
@@ -126,7 +176,33 @@ OAuth credentials, reads source rows with Spark JDBC, performs Spark cleaning an
 800-character/100-overlap chunking, embeds chunks with normalized 384-dimensional
 `sentence-transformers/all-MiniLM-L6-v2` vectors, and transactionally persists them with psycopg.
 
-The notebook defaults to five changed repositories for the initial smoke test. A second unchanged
+The notebook defaults to 20 changed repositories per run. A second unchanged
 run should select zero repositories. `repository_chunks` uses standard pgvector `VECTOR(384)` and a
-default-parameter cosine HNSW index. Retrieval and similarity-query behavior remain out of scope
-until Section 3.
+default-parameter cosine HNSW index.
+
+## Section 3: Semantic search and grounded RAG
+
+Both search endpoints embed the user query with the same normalized 384-dimensional
+`sentence-transformers/all-MiniLM-L6-v2` model used by the notebook. Lakebase retrieves candidate
+chunks with pgvector cosine distance and the existing HNSW-compatible ordering. RepoScout applies
+an internal `SEARCH_MIN_SIMILARITY` threshold (default `0.25`), groups evidence by repository, keeps
+at most two chunks per project, and returns up to `top_k` distinct projects. Metadata-filtered ANN
+queries can legitimately return fewer projects than requested.
+
+Example semantic request:
+
+```json
+{
+  "query": "Open-source tools for reliable batch data pipelines",
+  "top_k": 5,
+  "filters": {
+    "language": "Python",
+    "minimum_stars": 100
+  }
+}
+```
+
+`/search/ask` sends the same ranked evidence to OpenRouter. The user query is the task; retrieved
+README text is untrusted evidence and cannot supply behavioral instructions. The response includes
+the selected projects and chunks so its repository claims can be checked. Agents, saved projects,
+frontend behavior, and conversation memory remain out of scope.

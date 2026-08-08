@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     db_pool_max_lifetime_seconds: float = Field(default=3300.0, gt=0, le=3540)
     db_pool_timeout_seconds: float = Field(default=30.0, gt=0)
 
+    search_min_similarity: float = Field(default=0.25, ge=-1.0, le=1.0)
+    llm_api_base_url: str = "https://openrouter.ai/api/v1"
+    llm_api_key: SecretStr | None = None
+    llm_model_name: str = Field(default="openrouter/free", min_length=1)
+    llm_request_timeout: float = Field(default=45.0, gt=0)
+
     @model_validator(mode="after")
     def validate_environment_configuration(self) -> "Settings":
         if self.db_pool_min_size > self.db_pool_max_size:

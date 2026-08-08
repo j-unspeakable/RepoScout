@@ -11,6 +11,8 @@ DATABASE_ENVIRONMENT_VARIABLES = (
     "PGDATABASE",
     "PGUSER",
     "LAKEBASE_ENDPOINT",
+    "LLM_API_KEY",
+    "SEARCH_MIN_SIMILARITY",
 )
 
 
@@ -86,7 +88,11 @@ def test_unsupported_and_missing_environment_fail_clearly(
         get_settings()
 
 
-def test_non_test_environment_requires_external_configuration() -> None:
+def test_non_test_environment_requires_external_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_settings_environment(monkeypatch)
+
     with pytest.raises(ValidationError, match="Missing required configuration"):
         Settings(app_env=AppEnvironment.DATABRICKS)
 
@@ -94,3 +100,20 @@ def test_non_test_environment_requires_external_configuration() -> None:
 def test_pool_size_validation() -> None:
     with pytest.raises(ValidationError, match="DB_POOL_MIN_SIZE"):
         Settings(app_env=AppEnvironment.TEST, db_pool_min_size=5, db_pool_max_size=2)
+
+
+def test_search_threshold_is_bounded_and_openrouter_key_is_optional() -> None:
+    settings = Settings(app_env=AppEnvironment.TEST)
+
+    assert settings.search_min_similarity == 0.25
+    assert settings.llm_api_key is None
+    assert settings.llm_model_name == "openrouter/free"
+
+    with pytest.raises(ValidationError, match="less than or equal to 1"):
+        Settings(app_env=AppEnvironment.TEST, search_min_similarity=1.1)
+
+
+def test_openrouter_secret_is_redacted_from_settings_representation() -> None:
+    settings = Settings(app_env=AppEnvironment.TEST, llm_api_key="openrouter-secret")
+
+    assert "openrouter-secret" not in repr(settings)

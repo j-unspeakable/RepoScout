@@ -7,9 +7,14 @@ from app.config import AppEnvironment, Settings, get_settings
 from app.database.credentials import LakebaseCredentialProvider
 from app.database.pool import LakebasePool
 from app.repositories.ingestion import IngestionRepository
-from app.routers import health, ingestion
+from app.repositories.search import SearchRepository
+from app.routers import health, ingestion, search
+from app.services.embeddings import SentenceTransformerEmbeddingService
 from app.services.github import GitHubService
 from app.services.ingestion import IngestionService
+from app.services.openrouter import OpenRouterClient
+from app.services.rag import RagService
+from app.services.retrieval import RetrievalService
 
 
 @asynccontextmanager
@@ -29,13 +34,31 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     )
     database = LakebasePool(settings, credential_provider)
     github = GitHubService(settings)
+    openrouter = OpenRouterClient(settings) if settings.llm_api_key else None
     try:
         await database.open()
-        repository = IngestionRepository(database)
-        application.state.ingestion_service = IngestionService(github, repository)
+        ingestion_repository = IngestionRepository(database)
+        search_repository = SearchRepository(database)
+        embeddings = SentenceTransformerEmbeddingService()
+        retrieval = RetrievalService(
+            embeddings,
+            search_repository,
+            settings.search_min_similarity,
+        )
+        application.state.ingestion_service = IngestionService(github, ingestion_repository)
+        application.state.retrieval_service = retrieval
+        application.state.rag_service = RagService(
+            retrieval,
+            openrouter,
+            settings.llm_model_name,
+        )
         yield
     finally:
         application.state.ingestion_service = None
+        application.state.retrieval_service = None
+        application.state.rag_service = None
+        if openrouter is not None:
+            await openrouter.close()
         await github.close()
         await database.close()
 
@@ -48,8 +71,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     application.state.settings = settings or get_settings()
     application.state.ingestion_service = None
+    application.state.retrieval_service = None
+    application.state.rag_service = None
     application.include_router(health.router)
     application.include_router(ingestion.router)
+    application.include_router(search.router)
     return application
 
 

@@ -1,4 +1,9 @@
-command: ["fastapi", "run"]
+command:
+  - uvicorn
+  - app.main:app
+  - --workers
+  - "1"
+
 env:
   - name: APP_ENV
     value: databricks
@@ -6,3 +11,13 @@ env:
     valueFrom: postgres
   - name: GITHUB_TOKEN
     valueFrom: github_token
+  - name: LLM_API_KEY
+    valueFrom: openrouter_api_key
+  - name: LLM_API_BASE_URL
+    value: "https://openrouter.ai/api/v1"
+  - name: LLM_MODEL_NAME
+    value: "openrouter/free"
+  - name: LLM_REQUEST_TIMEOUT
+    value: "45"
+  - name: SEARCH_MIN_SIMILARITY
+    value: "0.25"

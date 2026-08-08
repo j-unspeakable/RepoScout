@@ -11,6 +11,8 @@ dependencies = [
     "psycopg[binary]>=3.3.0",
     "psycopg-pool>=3.3.0",
     "pydantic-settings>=2.10.0",
+    "sentence-transformers==5.6.1",
+    "torch>=2.11.0",
 ]
 
 [dependency-groups]
@@ -23,6 +25,16 @@ dev = [
 
 [tool.fastapi]
 entrypoint = "app.main:app"
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.pytest.ini_options]
 addopts = "-q"
