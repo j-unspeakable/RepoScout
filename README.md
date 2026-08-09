@@ -15,6 +15,9 @@ Lakebase.
   chunk similarity, with optional language and minimum-star filters.
 - `POST /search/ask` — retrieve repository evidence and ask OpenRouter for a grounded answer that
   includes the evidence used.
+- `POST /assistant/messages` — continue a bounded, session-scoped conversation through the
+  configured Databricks Supervisor endpoint.
+- `GET /saved-projects` — list the capstone user's saved repositories, statuses, and recent notes.
 - `POST /indexing-requests` — record a natural-language corpus coverage need for later human or
   platform review; this never triggers ingestion automatically.
 
@@ -91,9 +94,12 @@ answer while allowing up to `LLM_MAX_OUTPUT_TOKENS=2000` completion tokens so ro
 models have enough headroom to finish without returning truncated output.
 
 For a Databricks App, attach a Lakebase Autoscaling resource with key `postgres`, secret resources
-with keys `github_token` and `openrouter_api_key`, and use the included `app.yaml`. Databricks
-supplies the `PG*` and service-principal variables. Run `uv run alembic upgrade head` explicitly
-against the target before starting a version with new migrations.
+with keys `github_token` and `openrouter_api_key`, and the deployed Supervisor serving endpoint
+with key `supervisor_endpoint` and **Can query** permission. The included `app.yaml` receives the
+Supervisor endpoint name through that resource; it never contains the endpoint name, a workspace
+URL, or a personal token. Databricks supplies the `PG*` and service-principal variables. Run
+`uv run alembic upgrade head` explicitly against the target before starting a version with new
+migrations.
 
 ### Databricks App database permissions
 
@@ -221,8 +227,9 @@ Example semantic request:
 
 `/search/ask` sends the same ranked evidence to OpenRouter. The user query is the task; retrieved
 README text is untrusted evidence and cannot supply behavioral instructions. The response includes
-the selected projects and chunks so its repository claims can be checked. Supervisor Agents, My
-Projects frontend controls, and conversation memory remain out of scope.
+the selected projects and chunks so its repository claims can be checked. This endpoint remains a
+stable internal API even though the user-facing Ask experience now uses the Supervisor integration
+described below.
 
 ## Section 4: MCP tools
 
@@ -262,13 +269,35 @@ uv run ruff format --check .
 uv run ty check
 ```
 
+## Final product integration
+
+The user-facing Ask experience calls the configured Databricks Supervisor serving endpoint through
+`POST /assistant/messages`. Local requests authenticate through the configured Databricks CLI
+profile; deployed requests use the RepoScout App service principal. Attach the Supervisor endpoint
+to the main App with **Can query** permission and resource key `supervisor_endpoint`.
+
+Databricks Responses requests are stateless, so RepoScout keeps the complete response items needed
+for follow-up turns in a bounded in-memory store. Only an opaque conversation ID and visible user
+and assistant messages reach browser `sessionStorage`; MCP calls, arguments, and reasoning data are
+never returned. Conversations retain up to twelve turns, expire after one hour, and intentionally
+end when the application restarts.
+
+If a request is cancelled or its final response cannot be confirmed, RepoScout does not retry it
+automatically. A state-changing tool might already have completed—especially an append-only note—so
+the user is directed to check My Projects before retrying.
+
+`GET /saved-projects` powers the read-only My Projects view. Saving, status changes, and notes remain
+agent-driven and continue to use the internal `default` capstone user boundary.
+
 ## Frontend
 
 RepoScout includes a framework-free dark interface at the application root. It provides Discover
-and Ask views, expandable README evidence, grounded citation navigation, and live corpus-readiness
-metrics from `GET /corpus/summary`. Users can also submit natural-language indexing requests when
-the current corpus does not cover what they need. These requests are review-only and do not invoke
-the ingestion pipeline. Run it locally with:
+and conversational Ask views, a read-only My Projects view, expandable README evidence, and live
+corpus-readiness metrics from `GET /corpus/summary`. Ask uses the configured Databricks Supervisor
+endpoint and keeps bounded conversation history only in application memory; an opaque identifier
+and visible messages are retained for the current browser tab. Users can also submit
+natural-language indexing requests when the current corpus does not cover what they need. These
+requests are review-only and do not invoke the ingestion pipeline. Run it locally with:
 
 ```bash
 export APP_ENV=local

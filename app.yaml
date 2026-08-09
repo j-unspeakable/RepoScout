@@ -23,3 +23,7 @@ env:
     value: "2000"
   - name: SEARCH_MIN_SIMILARITY
     value: "0.25"
+  - name: SUPERVISOR_ENDPOINT_NAME
+    valueFrom: supervisor_endpoint
+  - name: SUPERVISOR_REQUEST_TIMEOUT_SECONDS
+    value: "120"

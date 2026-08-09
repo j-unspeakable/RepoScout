@@ -65,6 +65,8 @@ async def test_frontend_files_and_api_routes_remain_available(
     assert schema.status_code == 200
     assert "/corpus/summary" in schema.json()["paths"]
     assert "/indexing-requests" in schema.json()["paths"]
+    assert "/assistant/messages" in schema.json()["paths"]
+    assert "/saved-projects" in schema.json()["paths"]
     assert health.json() == {"status": "ok", "environment": "test"}
 
 
@@ -80,7 +82,9 @@ def test_frontend_uses_one_proxy_safe_application_base() -> None:
     assert 'apiRequest("corpus/summary")' in script
     assert 'apiRequest("indexing-requests"' in script
     assert 'endpoint: "search/semantic"' in script
-    assert 'endpoint: "search/ask"' in script
+    assert 'apiRequest("assistant/messages"' in script
+    assert 'apiRequest("saved-projects"' in script
+    assert 'endpoint: "search/ask"' not in script
     assert 'application.frontend("/", directory=FRONTEND_DIRECTORY, fallback=None)' in main_source
 
     forbidden = ("localhost", "127.0.0.1", "databricksapps.com", 'fetch("/', "fetch('/")
@@ -115,7 +119,8 @@ def test_frontend_contract_is_safe_accessible_and_self_contained() -> None:
     assert "animation: skeleton-pulse" in styles
     assert "#07110f" in styles
     assert "#2dd4bf" in styles
-    assert page.count('data-nav-view="') == 2
+    assert page.count('data-nav-view="') == 3
+    assert 'data-nav-view="projects"' in page
     assert "data-mode-view" not in page
     assert "mode-switcher" not in page
     assert "mode-switcher" not in styles
@@ -142,3 +147,33 @@ def test_frontend_contract_is_safe_accessible_and_self_contained() -> None:
     assert "have README content available" in script
     assert "could not currently be retrieved" in script
     assert "retrieval_status" not in script
+
+
+def test_agent_chat_and_my_projects_frontend_contract() -> None:
+    page = (FRONTEND_ROOT / "index.html").read_text()
+    script = (FRONTEND_ROOT / "assets" / "app.js").read_text()
+    styles = (FRONTEND_ROOT / "assets" / "styles.css").read_text()
+
+    assert 'id="ask-transcript"' in page
+    assert 'role="log"' in page
+    assert 'id="new-conversation"' in page
+    assert 'id="projects-view"' in page
+    assert 'id="projects-refresh"' in page
+    assert "ask-language" not in page
+    assert "ask-stars" not in page
+    assert "sessionStorage" in script
+    assert "CHAT_SESSION_KEY" in script
+    assert "conversation_id: chatState.conversationId" in script
+    assert "response.message.content" in script
+    assert "response.output" not in script
+    assert "tool_calls" not in script
+    assert "reasoning" not in script
+    assert "Supervisor" not in page
+    assert "MCP" not in page
+    assert "UNCERTAIN_COMPLETION_MESSAGE" in script
+    assert "Check My Projects before retrying" in script
+    assert "setTimeout" not in script
+    assert "typing-indicator" in styles
+    assert "chat-transcript" in styles
+    assert "saved-project-card" in script
+    assert "project-notes" in styles

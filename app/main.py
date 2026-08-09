@@ -12,7 +12,16 @@ from app.repositories.indexing_requests import IndexingRequestRepository
 from app.repositories.ingestion import IngestionRepository
 from app.repositories.project_tools import ProjectToolsRepository
 from app.repositories.search import SearchRepository
-from app.routers import corpus, health, indexing_requests, ingestion, search, tools
+from app.routers import (
+    assistant,
+    corpus,
+    health,
+    indexing_requests,
+    ingestion,
+    projects,
+    search,
+    tools,
+)
 from app.services.corpus import CorpusService
 from app.services.embeddings import SentenceTransformerEmbeddingService
 from app.services.github import GitHubService
@@ -22,6 +31,7 @@ from app.services.openrouter import OpenRouterClient
 from app.services.project_tools import ProjectToolsService
 from app.services.rag import RagService
 from app.services.retrieval import RetrievalService
+from app.services.supervisor import AssistantService, SupervisorClient
 
 FRONTEND_DIRECTORY = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -44,6 +54,9 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     database = LakebasePool(settings, credential_provider)
     github = GitHubService(settings)
     openrouter = OpenRouterClient(settings) if settings.llm_api_key else None
+    supervisor = None
+    if (settings.supervisor_endpoint_name or "").strip():
+        supervisor = SupervisorClient(settings)
     try:
         await database.open()
         ingestion_repository = IngestionRepository(database)
@@ -64,6 +77,9 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         )
         application.state.retrieval_service = retrieval
         application.state.project_tools_service = ProjectToolsService(project_tools_repository)
+        application.state.assistant_service = (
+            AssistantService(supervisor) if supervisor is not None else None
+        )
         application.state.rag_service = RagService(
             retrieval,
             openrouter,
@@ -76,7 +92,10 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         application.state.indexing_request_service = None
         application.state.retrieval_service = None
         application.state.project_tools_service = None
+        application.state.assistant_service = None
         application.state.rag_service = None
+        if supervisor is not None:
+            await supervisor.close()
         if openrouter is not None:
             await openrouter.close()
         await github.close()
@@ -95,11 +114,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.state.indexing_request_service = None
     application.state.retrieval_service = None
     application.state.project_tools_service = None
+    application.state.assistant_service = None
     application.state.rag_service = None
     application.include_router(health.router)
+    application.include_router(assistant.router)
     application.include_router(corpus.router)
     application.include_router(indexing_requests.router)
     application.include_router(ingestion.router)
+    application.include_router(projects.router)
     application.include_router(search.router)
     application.include_router(tools.router)
     application.frontend("/", directory=FRONTEND_DIRECTORY, fallback=None)

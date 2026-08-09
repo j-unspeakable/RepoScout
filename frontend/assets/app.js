@@ -1,13 +1,18 @@
 const APPLICATION_BASE_URL = new URL("./", document.baseURI);
 const TOP_K = 5;
+const CHAT_SESSION_KEY = "reposcout.ask-session.v1";
+const MAX_VISIBLE_CHAT_MESSAGES = 24;
+const UNCERTAIN_COMPLETION_MESSAGE =
+  "RepoScout couldn't confirm the final response. A requested action may already have completed. Check My Projects before retrying.";
 
 class ApiError extends Error {
-  constructor(status, detail, retryAfter = null) {
+  constructor(status, detail, retryAfter = null, uncertain = false) {
     super("RepoScout request failed");
     this.name = "ApiError";
     this.status = status;
     this.detail = detail;
     this.retryAfter = retryAfter;
+    this.uncertain = uncertain;
   }
 }
 
@@ -46,6 +51,7 @@ async function apiRequest(relativePath, options = {}) {
       response.status,
       payload?.detail ?? null,
       response.headers.get("Retry-After"),
+      response.headers.get("X-RepoScout-Completion") === "uncertain",
     );
   }
   return payload;
@@ -153,12 +159,20 @@ async function loadCorpusSummary() {
 }
 
 function activeViewFromHash() {
-  return window.location.hash === "#ask" ? "ask" : "discover";
+  if (window.location.hash === "#ask") {
+    return "ask";
+  }
+  return window.location.hash === "#projects" ? "projects" : "discover";
 }
 
 function showView(viewName, { moveFocus = false } = {}) {
   const title = document.querySelector("#mode-title");
-  title.textContent = viewName === "ask" ? "Ask RepoScout" : "Discover Projects";
+  const titles = {
+    ask: "Ask RepoScout",
+    projects: "My Projects",
+    discover: "Discover Projects",
+  };
+  title.textContent = titles[viewName];
 
   for (const view of document.querySelectorAll("[data-view]")) {
     view.hidden = view.dataset.view !== viewName;
@@ -174,10 +188,13 @@ function showView(viewName, { moveFocus = false } = {}) {
     title.setAttribute("tabindex", "-1");
     title.focus({ preventScroll: true });
   }
+  if (viewName === "projects") {
+    loadSavedProjects();
+  }
 }
 
 function normalizeInitialHash() {
-  if (window.location.hash !== "#discover" && window.location.hash !== "#ask") {
+  if (!["#discover", "#ask", "#projects"].includes(window.location.hash)) {
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#discover`);
   }
   showView(activeViewFromHash());
@@ -516,6 +533,355 @@ function renderAskResponse(payload, results) {
   results.replaceChildren(fragment);
 }
 
+const chatState = {
+  conversationId: null,
+  messages: [],
+  blocked: false,
+};
+
+function validStoredChatMessage(value) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    ["user", "assistant"].includes(value.role) &&
+    typeof value.content === "string" &&
+    value.content.trim().length > 0 &&
+    value.content.length <= (value.role === "user" ? 2000 : 20000)
+  );
+}
+
+function restoreChatSession() {
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(CHAT_SESSION_KEY) ?? "null");
+    if (stored === null || typeof stored !== "object") {
+      return;
+    }
+    if (typeof stored.conversationId !== "string") {
+      return;
+    }
+    if (!Array.isArray(stored.messages) || !stored.messages.every(validStoredChatMessage)) {
+      return;
+    }
+    chatState.conversationId = stored.conversationId;
+    chatState.messages = stored.messages.slice(-MAX_VISIBLE_CHAT_MESSAGES);
+  } catch {
+    sessionStorage.removeItem(CHAT_SESSION_KEY);
+  }
+}
+
+function persistChatSession() {
+  try {
+    if (!chatState.conversationId) {
+      sessionStorage.removeItem(CHAT_SESSION_KEY);
+      return;
+    }
+    sessionStorage.setItem(
+      CHAT_SESSION_KEY,
+      JSON.stringify({
+        conversationId: chatState.conversationId,
+        messages: chatState.messages.slice(-MAX_VISIBLE_CHAT_MESSAGES),
+      }),
+    );
+  } catch {
+    // The current page conversation remains usable when tab storage is unavailable.
+  }
+}
+
+function createChatMessage(message) {
+  const item = element("article", `chat-message is-${message.role}`);
+  item.append(element("span", "chat-speaker", message.role === "user" ? "You" : "RepoScout"));
+  const body = element("div", "chat-message-body");
+  if (message.role === "assistant") {
+    renderAnswerBody(body, message.content, new Map());
+  } else {
+    body.append(element("p", "", message.content));
+  }
+  item.append(body);
+  return item;
+}
+
+function createChatLoadingMessage() {
+  const item = element("article", "chat-message is-assistant is-pending");
+  item.setAttribute("aria-label", "RepoScout is working");
+  item.append(element("span", "chat-speaker", "RepoScout"));
+  const dots = element("div", "typing-indicator");
+  for (let index = 0; index < 3; index += 1) {
+    dots.append(element("span"));
+  }
+  item.append(dots);
+  return item;
+}
+
+function renderChatTranscript(pendingUserMessage = null) {
+  const transcript = document.querySelector("#ask-transcript");
+  const fragment = document.createDocumentFragment();
+  const visibleMessages = [...chatState.messages];
+  if (pendingUserMessage) {
+    visibleMessages.push({ role: "user", content: pendingUserMessage });
+  }
+  if (visibleMessages.length === 0) {
+    const welcome = element("div", "chat-welcome");
+    welcome.append(
+      element("h4", "", "Start with a project goal"),
+      element(
+        "p",
+        "",
+        "Ask RepoScout to find or compare projects, then follow up to save one, change its status, or add a note.",
+      ),
+    );
+    fragment.append(welcome);
+  } else {
+    for (const message of visibleMessages) {
+      fragment.append(createChatMessage(message));
+    }
+  }
+  if (pendingUserMessage) {
+    fragment.append(createChatLoadingMessage());
+  }
+  transcript.replaceChildren(fragment);
+  transcript.scrollTop = transcript.scrollHeight;
+}
+
+function resetChatConversation() {
+  chatState.conversationId = null;
+  chatState.messages = [];
+  chatState.blocked = false;
+  sessionStorage.removeItem(CHAT_SESSION_KEY);
+  renderChatTranscript();
+  setStatus(document.querySelector("#ask-status"), "New conversation started.", "success");
+  document.querySelector("#ask-query").focus({ preventScroll: true });
+}
+
+function validateAssistantMessage(message) {
+  if (!message) {
+    return "Tell RepoScout what you want to find or do.";
+  }
+  if (message.length > 2000) {
+    return "Keep your message to 2,000 characters or fewer.";
+  }
+  return null;
+}
+
+function assistantErrorMessage(error) {
+  if (error instanceof ApiError && error.status === 409) {
+    return "RepoScout is already working on this conversation. Wait for it to finish.";
+  }
+  if (error instanceof ApiError && error.status === 410) {
+    return "This conversation has expired. Start a new conversation to continue.";
+  }
+  if (error instanceof ApiError && error.status === 422) {
+    return "Check your message and try again.";
+  }
+  if (error instanceof ApiError && !error.uncertain && error.status === 503) {
+    return "Ask RepoScout is temporarily unavailable. Discover is still available.";
+  }
+  return UNCERTAIN_COMPLETION_MESSAGE;
+}
+
+function setupAssistantChat() {
+  const form = document.querySelector("#ask-form");
+  const query = document.querySelector("#ask-query");
+  const status = document.querySelector("#ask-status");
+  const cancel = form.querySelector(".cancel-button");
+  const submit = form.querySelector("button[type='submit']");
+  let controller = null;
+
+  restoreChatSession();
+  renderChatTranscript();
+  document.querySelector("#new-conversation").addEventListener("click", resetChatConversation);
+  cancel.addEventListener("click", () => controller?.abort());
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (controller !== null) {
+      return;
+    }
+    if (chatState.blocked) {
+      setStatus(
+        status,
+        "Start a new conversation before sending another message. Your draft has been preserved.",
+        "error",
+      );
+      document.querySelector("#new-conversation").focus({ preventScroll: true });
+      return;
+    }
+
+    const message = query.value.trim();
+    const validationMessage = validateAssistantMessage(message);
+    query.setAttribute("aria-invalid", validationMessage ? "true" : "false");
+    if (validationMessage) {
+      setStatus(status, validationMessage, "error");
+      query.focus();
+      return;
+    }
+
+    controller = new AbortController();
+    setRequestLoading(form, true);
+    renderChatTranscript(message);
+    setStatus(status, "RepoScout is working through your request. This may take several seconds…");
+
+    try {
+      const response = await apiRequest("assistant/messages", {
+        method: "POST",
+        body: JSON.stringify({
+          conversation_id: chatState.conversationId,
+          message,
+        }),
+        signal: controller.signal,
+      });
+      chatState.conversationId = response.conversation_id;
+      chatState.messages.push(
+        { role: "user", content: message },
+        { role: "assistant", content: response.message.content },
+      );
+      chatState.messages = chatState.messages.slice(-MAX_VISIBLE_CHAT_MESSAGES);
+      persistChatSession();
+      query.value = "";
+      renderChatTranscript();
+      setStatus(status, "");
+    } catch (error) {
+      renderChatTranscript();
+      const uncertain =
+        (error instanceof DOMException && error.name === "AbortError") ||
+        !(error instanceof ApiError) ||
+        error.uncertain;
+      if (uncertain || (error instanceof ApiError && error.status === 410)) {
+        chatState.blocked = true;
+      }
+      setStatus(status, assistantErrorMessage(error), "error");
+    } finally {
+      controller = null;
+      setRequestLoading(form, false);
+      submit.focus({ preventScroll: true });
+    }
+  });
+}
+
+function savedProjectStatusLabel(value) {
+  return {
+    INTERESTED: "Interested",
+    TO_TRY: "To try",
+    IN_PROGRESS: "In progress",
+    COMPLETED: "Completed",
+  }[value] ?? "Saved";
+}
+
+function formatProjectDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Date unavailable";
+  }
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date);
+}
+
+function createSavedProjectCard(project) {
+  const card = element("article", "project-card saved-project-card");
+  card.dataset.repoId = String(project.repo_id ?? "");
+  const header = element("div", "project-header");
+  header.append(element("h3", "", project.full_name || project.name || "Unnamed repository"));
+  const githubUrl = safeGitHubUrl(project.html_url);
+  if (githubUrl) {
+    const link = element("a", "github-link", "View on GitHub ↗");
+    link.href = githubUrl.href;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    header.append(link);
+  }
+  card.append(header);
+  card.append(
+    element(
+      "p",
+      "project-description",
+      project.description || "No project description is currently available.",
+    ),
+  );
+
+  const metadata = element("div", "metadata-row");
+  metadata.append(element("span", `status-badge status-${project.status.toLowerCase()}`, savedProjectStatusLabel(project.status)));
+  if (project.primary_language) {
+    metadata.append(metadataChip(project.primary_language));
+  }
+  metadata.append(metadataChip(`★ ${formatCount(project.stars)} stars`));
+  metadata.append(metadataChip(`${formatCount(project.forks)} forks`));
+  if (project.license) {
+    metadata.append(metadataChip(project.license));
+  }
+  card.append(metadata);
+  card.append(
+    element(
+      "p",
+      "saved-project-dates",
+      `Saved ${formatProjectDate(project.saved_at)} · Updated ${formatProjectDate(project.updated_at)}`,
+    ),
+  );
+
+  const notes = Array.isArray(project.notes) ? project.notes : [];
+  if (notes.length > 0) {
+    const details = element("details", "project-notes");
+    details.append(element("summary", "", `Notes (${notes.length})`));
+    const list = element("ul", "project-note-list");
+    for (const note of notes) {
+      const item = element("li");
+      item.append(
+        element("p", "", note.note),
+        element("time", "", formatProjectDate(note.created_at)),
+      );
+      list.append(item);
+    }
+    details.append(list);
+    card.append(details);
+  } else {
+    card.append(element("p", "project-notes-empty", "No notes yet."));
+  }
+  return card;
+}
+
+let projectsController = null;
+
+async function loadSavedProjects() {
+  if (projectsController !== null) {
+    return;
+  }
+  const status = document.querySelector("#projects-status");
+  const results = document.querySelector("#projects-results");
+  const refresh = document.querySelector("#projects-refresh");
+  projectsController = new AbortController();
+  refresh.disabled = true;
+  showLoading(results, 2);
+  setStatus(status, "Loading your saved projects…");
+  try {
+    const response = await apiRequest("saved-projects", { signal: projectsController.signal });
+    const projects = Array.isArray(response.projects) ? response.projects : [];
+    if (projects.length === 0) {
+      const empty = element("div", "empty-panel");
+      empty.append(
+        element("h3", "", "No saved projects yet"),
+        element("p", "", "Ask RepoScout to find a project, then tell it to save your choice."),
+      );
+      const link = element("a", "secondary-button", "Ask RepoScout");
+      link.href = "#ask";
+      empty.append(link);
+      results.replaceChildren(empty);
+    } else {
+      const fragment = document.createDocumentFragment();
+      for (const project of projects) {
+        fragment.append(createSavedProjectCard(project));
+      }
+      results.replaceChildren(fragment);
+    }
+    setStatus(status, "");
+  } catch (error) {
+    if (!(error instanceof DOMException && error.name === "AbortError")) {
+      results.replaceChildren();
+      setStatus(status, friendlyError(error), "error");
+    }
+  } finally {
+    projectsController = null;
+    refresh.disabled = false;
+    results.setAttribute("aria-busy", "false");
+  }
+}
+
 function activeSearchQuery() {
   const queryId = activeViewFromHash() === "ask" ? "#ask-query" : "#discover-query";
   return document.querySelector(queryId).value.trim();
@@ -730,23 +1096,18 @@ function setupSearchMode({ formId, statusId, resultsId, endpoint, mode }) {
 }
 
 document.querySelector("#corpus-retry").addEventListener("click", loadCorpusSummary);
+document.querySelector("#projects-refresh").addEventListener("click", loadSavedProjects);
 window.addEventListener("hashchange", () => showView(activeViewFromHash(), { moveFocus: true }));
 
 normalizeInitialHash();
 setupExampleQueries();
 setupIndexingRequest();
+setupAssistantChat();
 setupSearchMode({
   formId: "discover-form",
   statusId: "discover-status",
   resultsId: "discover-results",
   endpoint: "search/semantic",
   mode: "discover",
-});
-setupSearchMode({
-  formId: "ask-form",
-  statusId: "ask-status",
-  resultsId: "ask-results",
-  endpoint: "search/ask",
-  mode: "ask",
 });
 loadCorpusSummary();

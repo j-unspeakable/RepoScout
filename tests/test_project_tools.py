@@ -23,12 +23,14 @@ from app.repositories.project_tools import (
     ProjectNoteRecord,
     ProjectToolsRepository,
     ProjectToolsRepositoryError,
+    SavedProjectListRecord,
     SavedProjectRecord,
 )
 from app.schemas.tools import ProjectNoteCreate, ProjectStatus
 from app.services.project_tools import (
     ProjectNotFoundError,
     ProjectToolsService,
+    ProjectToolsUnavailableError,
     SavedProjectNotFoundError,
 )
 from app.services.retrieval import (
@@ -63,11 +65,38 @@ def _details(saved: SavedProjectRecord | None = None) -> ProjectDetailsRecord:
     )
 
 
+def _listed_project(notes: list[ProjectNoteRecord] | None = None) -> SavedProjectListRecord:
+    now = datetime.now(UTC)
+    return SavedProjectListRecord(
+        repo_id=42,
+        name="pipeline",
+        full_name="owner/pipeline",
+        owner="owner",
+        description="Pipelines",
+        html_url="https://github.com/owner/pipeline",
+        primary_language="Python",
+        stars=100,
+        forks=5,
+        open_issues=2,
+        topics=["data-engineering"],
+        license="MIT",
+        status=ProjectStatus.INTERESTED,
+        saved_at=now,
+        updated_at=now,
+        notes=notes or [],
+    )
+
+
 class FakeProjectRepository:
     def __init__(self) -> None:
         self.saved: SavedProjectRecord | None = None
         self.notes: list[ProjectNoteRecord] = []
         self.fail = False
+
+    async def list_saved_projects(self, user_key: str) -> list[SavedProjectListRecord]:
+        if self.fail:
+            raise ProjectToolsRepositoryError("database secret")
+        return [_listed_project(self.notes)] if self.saved is not None else []
 
     async def get_project_details(
         self, user_key: str, repo_id: int, evidence_limit: int
@@ -127,8 +156,13 @@ class FakeProjectRepository:
 
 
 class FakeCursor:
-    def __init__(self, rows: list[dict[str, object] | None]) -> None:
+    def __init__(
+        self,
+        rows: list[dict[str, object] | None],
+        batches: list[list[dict[str, object]]] | None = None,
+    ) -> None:
         self.rows = rows
+        self.batches = batches or []
         self.statements: list[str] = []
 
     async def __aenter__(self) -> "FakeCursor":
@@ -142,6 +176,9 @@ class FakeCursor:
 
     async def fetchone(self) -> dict[str, object] | None:
         return self.rows.pop(0)
+
+    async def fetchall(self) -> list[dict[str, object]]:
+        return self.batches.pop(0)
 
 
 class FakeConnection:
@@ -199,6 +236,9 @@ class FakeProjectService:
     def __init__(self) -> None:
         self.saved = _saved()
         self.notes: list[ProjectNoteRecord] = []
+
+    async def list_saved_projects(self, user_key: str) -> list[SavedProjectListRecord]:
+        return [_listed_project(self.notes)]
 
     async def get_project_details(
         self, user_key: str, repo_id: int, evidence_limit: int
@@ -315,6 +355,56 @@ async def test_service_repeated_save_preserves_existing_record_and_requires_save
         await ProjectToolsService(FakeProjectRepository()).add_project_note("default", 42, "note")
 
 
+@pytest.mark.asyncio
+async def test_saved_project_listing_uses_two_bounded_queries_and_safe_failures() -> None:
+    now = datetime.now(UTC)
+    saved_project_id = uuid4()
+    note_id = uuid4()
+    project_row: dict[str, object] = {
+        "saved_project_id": saved_project_id,
+        "status": "IN_PROGRESS",
+        "saved_at": now,
+        "updated_at": now,
+        "repo_id": 42,
+        "name": "pipeline",
+        "full_name": "owner/pipeline",
+        "owner": "owner",
+        "description": "Pipelines",
+        "html_url": "https://github.com/owner/pipeline",
+        "primary_language": "Python",
+        "stars": 100,
+        "forks": 5,
+        "open_issues": 2,
+        "topics": ["data-engineering"],
+        "license": "MIT",
+    }
+    note_row: dict[str, object] = {
+        "saved_project_id": saved_project_id,
+        "note_id": note_id,
+        "note_text": "Evaluate setup",
+        "created_at": now,
+    }
+    cursor = FakeCursor([], [[project_row], [note_row]])
+    repository = ProjectToolsRepository(
+        cast(ConnectionProvider, FakeDatabase(FakeConnection(cursor)))
+    )
+
+    records = await repository.list_saved_projects("default")
+
+    assert records[0].repo_id == 42
+    assert records[0].notes[0].note == "Evaluate setup"
+    assert len(cursor.statements) == 2
+    assert "ORDER BY sp.updated_at DESC, r.repo_id ASC" in cursor.statements[0]
+    assert "LIMIT 10" in cursor.statements[1]
+    assert "recent.created_at DESC, recent.note_id ASC" in cursor.statements[1]
+
+    unavailable = ProjectToolsService(
+        ProjectToolsRepository(cast(ConnectionProvider, FakeDatabase()))
+    )
+    with pytest.raises(ProjectToolsUnavailableError, match="Saved projects unavailable"):
+        await unavailable.list_saved_projects("default")
+
+
 @asynccontextmanager
 async def _client() -> AsyncIterator[httpx.AsyncClient]:
     app = create_app(Settings(app_env=AppEnvironment.TEST))
@@ -368,6 +458,17 @@ async def test_all_machine_tool_endpoints_and_validation() -> None:
     assert final_details.json()["notes"][0]["note"] == "Try this"
     assert invalid.status_code == 422
     assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_browser_saved_projects_endpoint_is_typed_and_read_only() -> None:
+    async with _client() as client:
+        response = await client.get("/saved-projects")
+
+    assert response.status_code == 200
+    assert response.json()["projects"][0]["full_name"] == "owner/pipeline"
+    assert response.json()["projects"][0]["status"] == "INTERESTED"
+    assert "saved_project_id" not in response.text
 
 
 @pytest.mark.asyncio

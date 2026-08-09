@@ -56,7 +56,29 @@ class ProjectDetailsRecord:
     notes: list[ProjectNoteRecord]
 
 
+@dataclass(frozen=True, slots=True)
+class SavedProjectListRecord:
+    repo_id: int
+    name: str
+    full_name: str
+    owner: str
+    description: str | None
+    html_url: str
+    primary_language: str | None
+    stars: int
+    forks: int
+    open_issues: int
+    topics: list[str]
+    license: str | None
+    status: ProjectStatus
+    saved_at: datetime
+    updated_at: datetime
+    notes: list[ProjectNoteRecord]
+
+
 class ProjectToolsRepositoryProtocol(Protocol):
+    async def list_saved_projects(self, user_key: str) -> list[SavedProjectListRecord]: ...
+
     async def get_project_details(
         self, user_key: str, repo_id: int, evidence_limit: int
     ) -> ProjectDetailsRecord | None: ...
@@ -90,6 +112,76 @@ class ProjectToolsRepositoryProtocol(Protocol):
 class ProjectToolsRepository:
     def __init__(self, database: ConnectionProvider) -> None:
         self._database = database
+
+    async def list_saved_projects(self, user_key: str) -> list[SavedProjectListRecord]:
+        try:
+            async with self._database.connection() as connection:
+                async with connection.cursor(row_factory=dict_row) as cursor:
+                    await cursor.execute(
+                        """
+                        SELECT sp.saved_project_id, sp.status, sp.saved_at, sp.updated_at,
+                               r.repo_id, r.name, r.full_name, r.owner, r.description,
+                               r.html_url, r.primary_language, r.stars, r.forks,
+                               r.open_issues, r.topics, r.license
+                        FROM saved_projects AS sp
+                        JOIN repositories AS r ON r.repo_id = sp.repo_id
+                        WHERE sp.user_key = %s
+                        ORDER BY sp.updated_at DESC, r.repo_id ASC
+                        """,
+                        (user_key,),
+                    )
+                    project_rows = await cursor.fetchall()
+                    if not project_rows:
+                        return []
+
+                    await cursor.execute(
+                        """
+                        SELECT sp.saved_project_id, recent.note_id,
+                               recent.note_text, recent.created_at
+                        FROM saved_projects AS sp
+                        JOIN LATERAL (
+                            SELECT pn.note_id, pn.note_text, pn.created_at
+                            FROM project_notes AS pn
+                            WHERE pn.saved_project_id = sp.saved_project_id
+                            ORDER BY pn.created_at DESC, pn.note_id ASC
+                            LIMIT 10
+                        ) AS recent ON TRUE
+                        WHERE sp.user_key = %s
+                        ORDER BY sp.saved_project_id ASC,
+                                 recent.created_at DESC, recent.note_id ASC
+                        """,
+                        (user_key,),
+                    )
+                    note_rows = await cursor.fetchall()
+        except psycopg.Error as exc:
+            raise ProjectToolsRepositoryError("Unable to list saved projects") from exc
+
+        notes_by_project: dict[UUID, list[ProjectNoteRecord]] = {}
+        for row in note_rows:
+            notes_by_project.setdefault(row["saved_project_id"], []).append(
+                self._note_from_row(row)
+            )
+        return [
+            SavedProjectListRecord(
+                repo_id=row["repo_id"],
+                name=row["name"],
+                full_name=row["full_name"],
+                owner=row["owner"],
+                description=row["description"],
+                html_url=row["html_url"],
+                primary_language=row["primary_language"],
+                stars=row["stars"],
+                forks=row["forks"],
+                open_issues=row["open_issues"],
+                topics=list(row["topics"]),
+                license=row["license"],
+                status=ProjectStatus(row["status"]),
+                saved_at=row["saved_at"],
+                updated_at=row["updated_at"],
+                notes=notes_by_project.get(row["saved_project_id"], []),
+            )
+            for row in project_rows
+        ]
 
     async def get_project_details(
         self, user_key: str, repo_id: int, evidence_limit: int

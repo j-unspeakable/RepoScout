@@ -9,6 +9,7 @@ from app.services.ingestion import IngestionService
 from app.services.project_tools import ProjectToolsService
 from app.services.rag import RagService
 from app.services.retrieval import RetrievalService
+from app.services.supervisor import AssistantService
 
 
 async def get_app_settings(request: Request) -> Settings:
@@ -77,6 +78,16 @@ async def get_project_tools_service(request: Request) -> ProjectToolsService:
     return service
 
 
+async def get_assistant_service(request: Request) -> AssistantService:
+    service: AssistantService | None = getattr(request.app.state, "assistant_service", None)
+    if service is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Ask RepoScout is not configured",
+        )
+    return service
+
+
 async def get_project_user_key() -> str:
     """Return the capstone user scope from one replaceable identity boundary."""
     return "default"
@@ -90,3 +101,4 @@ RetrievalServiceDep = Annotated[RetrievalService, Depends(get_retrieval_service)
 RagServiceDep = Annotated[RagService, Depends(get_rag_service)]
 ProjectToolsServiceDep = Annotated[ProjectToolsService, Depends(get_project_tools_service)]
 ProjectUserKeyDep = Annotated[str, Depends(get_project_user_key)]
+AssistantServiceDep = Annotated[AssistantService, Depends(get_assistant_service)]

@@ -6,6 +6,7 @@ from app.repositories.project_tools import (
     ProjectNoteRecord,
     ProjectToolsRepositoryError,
     ProjectToolsRepositoryProtocol,
+    SavedProjectListRecord,
     SavedProjectRecord,
 )
 from app.schemas.tools import ProjectStatus
@@ -26,6 +27,12 @@ class SavedProjectNotFoundError(RuntimeError):
 class ProjectToolsService:
     def __init__(self, repository: ProjectToolsRepositoryProtocol) -> None:
         self._repository = repository
+
+    async def list_saved_projects(self, user_key: str) -> list[SavedProjectListRecord]:
+        try:
+            return await self._repository.list_saved_projects(user_key)
+        except ProjectToolsRepositoryError as exc:
+            raise ProjectToolsUnavailableError("Saved projects unavailable") from exc
 
     async def get_project_details(
         self, user_key: str, repo_id: int, evidence_limit: int

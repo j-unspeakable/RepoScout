@@ -25,6 +25,7 @@
         <nav class="primary-nav" aria-label="Primary navigation">
           <a href="#discover" data-nav-view="discover">Discover</a>
           <a href="#ask" data-nav-view="ask">Ask RepoScout</a>
+          <a href="#projects" data-nav-view="projects">My Projects</a>
         </nav>
       </div>
     </header>
@@ -163,68 +164,70 @@
         </section>
 
         <section id="ask-view" class="mode-view" data-view="ask" aria-labelledby="ask-title" hidden>
-          <div class="form-panel ask-form-panel">
+          <div class="form-panel ask-form-panel chat-panel">
             <div class="panel-heading">
               <span class="panel-icon" aria-hidden="true">✦</span>
               <div>
                 <h3 id="ask-title">Ask RepoScout</h3>
-                <p>Get a concise answer grounded in the indexed projects and their README evidence.</p>
+                <p>Find, compare, save, and organize projects through a natural conversation.</p>
               </div>
+              <button id="new-conversation" class="text-button chat-reset" type="button">
+                New conversation
+              </button>
             </div>
+            <div
+              id="ask-transcript"
+              class="chat-transcript"
+              role="log"
+              aria-live="polite"
+              aria-label="Ask RepoScout conversation"
+            ></div>
             <form id="ask-form" novalidate>
               <div class="field field-wide">
                 <label for="ask-query">What would you like RepoScout to help with?</label>
                 <textarea
                   id="ask-query"
                   name="query"
-                  rows="4"
+                  rows="3"
                   minlength="1"
-                  maxlength="500"
+                  maxlength="2000"
                   required
                   placeholder="Find beginner-friendly Python projects for learning RAG without a huge framework"
                 ></textarea>
-                <span class="field-hint">Answers cite the project evidence used to support recommendations.</span>
+                <span class="field-hint">
+                  Follow up naturally with requests such as “Tell me more about the second one” or “Save it.”
+                </span>
               </div>
-
-              <fieldset class="filter-grid">
-                <legend>Optional filters</legend>
-                <div class="field">
-                  <label for="ask-language">Language</label>
-                  <input
-                    id="ask-language"
-                    name="language"
-                    type="text"
-                    maxlength="100"
-                    autocomplete="off"
-                    placeholder="Python"
-                  >
-                </div>
-                <div class="field">
-                  <label for="ask-stars">Minimum stars</label>
-                  <input
-                    id="ask-stars"
-                    name="minimum_stars"
-                    type="number"
-                    min="0"
-                    step="1"
-                    inputmode="numeric"
-                    placeholder="100"
-                  >
-                </div>
-              </fieldset>
 
               <div class="form-actions">
                 <button class="primary-button" type="submit">
-                  <span class="button-label">Ask RepoScout</span>
+                  <span class="button-label">Send message</span>
                   <span class="spinner" aria-hidden="true"></span>
                 </button>
-                <button class="cancel-button" type="button" hidden>Cancel</button>
+                <button class="cancel-button" type="button" hidden>Stop waiting</button>
               </div>
             </form>
           </div>
 
           <div id="ask-status" class="request-status" role="status" aria-live="polite"></div>
-          <div id="ask-results" class="results-stack" aria-label="RepoScout answer"></div>
+        </section>
+
+        <section
+          id="projects-view"
+          class="mode-view"
+          data-view="projects"
+          aria-labelledby="projects-title"
+          hidden
+        >
+          <div class="projects-toolbar">
+            <div>
+              <h3 id="projects-title">My Projects</h3>
+              <p>Projects you asked RepoScout to save, with their current status and notes.</p>
+            </div>
+            <button id="projects-refresh" class="secondary-button" type="button">Refresh</button>
+          </div>
+          <div id="projects-status" class="request-status" role="status" aria-live="polite"></div>
+          <div id="projects-results" class="results-stack" aria-label="Saved projects"></div>
         </section>
 
         <section class="coverage-feedback" aria-labelledby="coverage-feedback-title">

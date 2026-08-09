@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     llm_request_timeout: float = Field(default=45.0, gt=0)
     llm_max_output_tokens: int = Field(default=2000, ge=600, le=8192)
 
+    supervisor_endpoint_name: str | None = None
+    supervisor_request_timeout_seconds: float = Field(default=120.0, gt=0, le=300)
+
     @model_validator(mode="after")
     def validate_environment_configuration(self) -> "Settings":
         if self.db_pool_min_size > self.db_pool_max_size:
