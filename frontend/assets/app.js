@@ -86,6 +86,51 @@ function setMetricValue(node, value) {
   node.classList.remove("metric-loading");
 }
 
+function joinReasonPhrases(phrases) {
+  if (phrases.length === 0) {
+    return "";
+  }
+  if (phrases.length === 1) {
+    return phrases[0];
+  }
+  if (phrases.length === 2) {
+    return `${phrases[0]}, and ${phrases[1]}`;
+  }
+  return `${phrases.slice(0, -1).join(", ")}, and ${phrases.at(-1)}`;
+}
+
+function corpusReadinessCopy(summary) {
+  const searchable = formatCount(summary.repositories_searchable);
+  const ingested = formatCount(summary.repositories_ingested);
+  const reasons = summary.not_searchable_reasons;
+  const phrases = [];
+
+  if (reasons.awaiting_indexing > 0) {
+    const verb = reasons.awaiting_indexing === 1 ? "is" : "are";
+    phrases.push(`${formatCount(reasons.awaiting_indexing)} ${verb} awaiting indexing`);
+  }
+  if (reasons.missing_readme > 0) {
+    const verb = reasons.missing_readme === 1 ? "doesn't" : "don't";
+    phrases.push(
+      `${formatCount(reasons.missing_readme)} ${verb} have README content available`,
+    );
+  }
+  if (reasons.retrieval_error > 0) {
+    phrases.push(`${formatCount(reasons.retrieval_error)} could not currently be retrieved`);
+  }
+  if (reasons.other > 0) {
+    const verb = reasons.other === 1 ? "is" : "are";
+    phrases.push(`${formatCount(reasons.other)} ${verb} currently unavailable`);
+  }
+
+  let copy = `${searchable} of ${ingested} repositories are searchable.`;
+  const explanation = joinReasonPhrases(phrases);
+  if (explanation) {
+    copy += ` ${explanation}.`;
+  }
+  return `${copy} Last indexed ${formatIndexedTime(summary.last_indexed_at)}`;
+}
+
 async function loadCorpusSummary() {
   const metrics = document.querySelector("#corpus-metrics");
   const detail = document.querySelector("#corpus-detail");
@@ -98,7 +143,7 @@ async function loadCorpusSummary() {
     setMetricValue(document.querySelector("#metric-repositories"), summary.repositories_ingested);
     setMetricValue(document.querySelector("#metric-searchable"), summary.repositories_searchable);
     setMetricValue(document.querySelector("#metric-chunks"), summary.searchable_chunks);
-    detail.textContent = `${formatCount(summary.readmes_available)} repositories have README content available · Last indexed ${formatIndexedTime(summary.last_indexed_at)}`;
+    detail.textContent = corpusReadinessCopy(summary);
   } catch {
     detail.textContent = "Search readiness is temporarily unavailable. Search is still available.";
     retry.hidden = false;

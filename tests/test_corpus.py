@@ -15,6 +15,7 @@ from app.repositories.corpus import (
     CorpusRepository,
     CorpusRepositoryError,
     CorpusSummaryRecord,
+    NotSearchableReasonsRecord,
 )
 from app.services.corpus import CorpusService, CorpusUnavailableError
 
@@ -100,49 +101,203 @@ def _record(last_indexed_at: datetime | None = None) -> CorpusSummaryRecord:
         readmes_available=265,
         repositories_searchable=215,
         searchable_chunks=989,
+        repositories_not_searchable=54,
+        not_searchable_reasons=NotSearchableReasonsRecord(
+            missing_readme=4,
+            retrieval_error=0,
+            awaiting_indexing=49,
+            other=1,
+        ),
         last_indexed_at=last_indexed_at,
     )
+
+
+def _summary_row(
+    *,
+    ingested: int,
+    available: int,
+    searchable: int,
+    chunks: int,
+    missing: int,
+    retrieval_error: int,
+    awaiting: int,
+    other: int = 0,
+    last_indexed_at: datetime | None = None,
+) -> dict[str, Any]:
+    return {
+        "repositories_ingested": ingested,
+        "readmes_available": available,
+        "repositories_searchable": searchable,
+        "searchable_chunks": chunks,
+        "repositories_not_searchable": ingested - searchable,
+        "missing_readme": missing,
+        "retrieval_error": retrieval_error,
+        "awaiting_indexing": awaiting,
+        "other": other,
+        "last_indexed_at": last_indexed_at,
+    }
 
 
 @pytest.mark.asyncio
 async def test_corpus_repository_returns_real_counts_and_latest_index_time() -> None:
     indexed_at = datetime(2026, 8, 8, 17, 41, tzinfo=UTC)
     cursor = FakeCursor(
-        {
-            "repositories_ingested": 269,
-            "readmes_available": 265,
-            "repositories_searchable": 215,
-            "searchable_chunks": 989,
-            "last_indexed_at": indexed_at,
-        }
+        _summary_row(
+            ingested=269,
+            available=265,
+            searchable=215,
+            chunks=989,
+            missing=4,
+            retrieval_error=0,
+            awaiting=49,
+            other=1,
+            last_indexed_at=indexed_at,
+        )
     )
     repository = CorpusRepository(cast(ConnectionProvider, FakeDatabase(cursor)))
 
     result = await repository.get_summary()
 
     assert result == _record(indexed_at)
-    assert cursor.executed_sql.count("SELECT count(*) FROM repositories") == 1
-    assert "retrieval_status = 'available'" in cursor.executed_sql
-    assert "count(DISTINCT repo_id) FROM repository_chunks" in cursor.executed_sql
-    assert "max(processed_at) FROM repository_chunks" in cursor.executed_sql
+    assert "WITH chunk_state AS" in cursor.executed_sql
+    assert "LEFT JOIN repository_readmes" in cursor.executed_sql
+    assert "count(*) FILTER (WHERE has_chunks)" in cursor.executed_sql
+    assert "NOT has_chunks AND retrieval_status = 'missing'" in cursor.executed_sql
+    assert "NOT has_chunks AND retrieval_status = 'error'" in cursor.executed_sql
+    assert "NOT has_chunks AND retrieval_status = 'available'" in cursor.executed_sql
+    assert "max(last_indexed_at)" in cursor.executed_sql
+
+
+@pytest.mark.parametrize(
+    ("row", "expected_searchable", "expected_reasons"),
+    [
+        (
+            _summary_row(
+                ingested=4,
+                available=4,
+                searchable=4,
+                chunks=20,
+                missing=0,
+                retrieval_error=0,
+                awaiting=0,
+            ),
+            4,
+            NotSearchableReasonsRecord(0, 0, 0, 0),
+        ),
+        (
+            _summary_row(
+                ingested=1,
+                available=0,
+                searchable=0,
+                chunks=0,
+                missing=1,
+                retrieval_error=0,
+                awaiting=0,
+            ),
+            0,
+            NotSearchableReasonsRecord(1, 0, 0, 0),
+        ),
+        (
+            _summary_row(
+                ingested=1,
+                available=0,
+                searchable=0,
+                chunks=0,
+                missing=0,
+                retrieval_error=1,
+                awaiting=0,
+            ),
+            0,
+            NotSearchableReasonsRecord(0, 1, 0, 0),
+        ),
+        (
+            _summary_row(
+                ingested=1,
+                available=0,
+                searchable=1,
+                chunks=3,
+                missing=0,
+                retrieval_error=0,
+                awaiting=0,
+            ),
+            1,
+            NotSearchableReasonsRecord(0, 0, 0, 0),
+        ),
+        (
+            _summary_row(
+                ingested=1,
+                available=1,
+                searchable=0,
+                chunks=0,
+                missing=0,
+                retrieval_error=0,
+                awaiting=1,
+            ),
+            0,
+            NotSearchableReasonsRecord(0, 0, 1, 0),
+        ),
+        (
+            _summary_row(
+                ingested=10,
+                available=6,
+                searchable=4,
+                chunks=30,
+                missing=2,
+                retrieval_error=1,
+                awaiting=2,
+                other=1,
+            ),
+            4,
+            NotSearchableReasonsRecord(2, 1, 2, 1),
+        ),
+    ],
+    ids=(
+        "all-searchable",
+        "missing-readme",
+        "retrieval-error-without-chunks",
+        "retrieval-error-with-existing-chunks",
+        "available-awaiting-indexing",
+        "mixed-reasons",
+    ),
+)
+def test_corpus_reason_classification_contract(
+    row: dict[str, Any],
+    expected_searchable: int,
+    expected_reasons: NotSearchableReasonsRecord,
+) -> None:
+    result = CorpusRepository._record_from_row(row)
+
+    assert result.repositories_searchable == expected_searchable
+    assert result.not_searchable_reasons == expected_reasons
+    assert result.repositories_not_searchable == result.repositories_ingested - expected_searchable
 
 
 @pytest.mark.asyncio
 async def test_corpus_repository_supports_empty_index_and_maps_database_errors() -> None:
     cursor = FakeCursor(
-        {
-            "repositories_ingested": 0,
-            "readmes_available": 0,
-            "repositories_searchable": 0,
-            "searchable_chunks": 0,
-            "last_indexed_at": None,
-        }
+        _summary_row(
+            ingested=0,
+            available=0,
+            searchable=0,
+            chunks=0,
+            missing=0,
+            retrieval_error=0,
+            awaiting=0,
+        )
     )
     repository = CorpusRepository(cast(ConnectionProvider, FakeDatabase(cursor)))
 
     result = await repository.get_summary()
 
-    assert result == CorpusSummaryRecord(0, 0, 0, 0, None)
+    assert result == CorpusSummaryRecord(
+        0,
+        0,
+        0,
+        0,
+        0,
+        NotSearchableReasonsRecord(0, 0, 0, 0),
+        None,
+    )
 
     unavailable = CorpusRepository(
         cast(
@@ -195,6 +350,13 @@ async def test_corpus_summary_route_returns_typed_summary() -> None:
         "readmes_available": 265,
         "repositories_searchable": 215,
         "searchable_chunks": 989,
+        "repositories_not_searchable": 54,
+        "not_searchable_reasons": {
+            "missing_readme": 4,
+            "retrieval_error": 0,
+            "awaiting_indexing": 49,
+            "other": 1,
+        },
         "last_indexed_at": "2026-08-08T17:41:00Z",
     }
 

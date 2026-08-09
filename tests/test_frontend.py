@@ -32,6 +32,7 @@ async def test_frontend_files_and_api_routes_remain_available(
     assert (FRONTEND_ROOT / "index.html").is_file()
     assert (FRONTEND_ROOT / "assets" / "styles.css").is_file()
     assert (FRONTEND_ROOT / "assets" / "app.js").is_file()
+    assert (FRONTEND_ROOT / "assets" / "favicon.svg").is_file()
 
     async def run_sync_inline(function: Any, *args: Any, **_kwargs: Any) -> Any:
         return function(*args)
@@ -42,6 +43,7 @@ async def test_frontend_files_and_api_routes_remain_available(
         index = await client.get("/")
         index_head = await client.head("/")
         stylesheet = await client.get("/assets/styles.css")
+        favicon = await client.get("/assets/favicon.svg")
         script_head = await client.head("/assets/app.js")
         missing = await client.get("/not-a-client-route")
         docs = await client.get("/docs")
@@ -54,6 +56,8 @@ async def test_frontend_files_and_api_routes_remain_available(
     assert index_head.content == b""
     assert stylesheet.status_code == 200
     assert "prefers-reduced-motion" in stylesheet.text
+    assert favicon.status_code == 200
+    assert favicon.headers["content-type"].startswith("image/svg+xml")
     assert script_head.status_code == 200
     assert script_head.content == b""
     assert missing.status_code == 404
@@ -85,6 +89,7 @@ def test_frontend_uses_one_proxy_safe_application_base() -> None:
         assert value not in script
     assert 'href="/' not in page
     assert 'src="/' not in page
+    assert '<link rel="icon" href="./assets/favicon.svg" type="image/svg+xml">' in page
 
 
 def test_frontend_contract_is_safe_accessible_and_self_contained() -> None:
@@ -131,3 +136,9 @@ def test_frontend_contract_is_safe_accessible_and_self_contained() -> None:
     assert "Request received for review." in script
     assert "status.dataset.completed" in script
     assert "setTimeout" not in script
+    assert "corpusReadinessCopy" in script
+    assert "summary.not_searchable_reasons" in script
+    assert "awaiting indexing" in script
+    assert "have README content available" in script
+    assert "could not currently be retrieved" in script
+    assert "retrieval_status" not in script
