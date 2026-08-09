@@ -282,6 +282,11 @@ and assistant messages reach browser `sessionStorage`; MCP calls, arguments, and
 never returned. Conversations retain up to twelve turns, expire after one hour, and intentionally
 end when the application restarts.
 
+When the Supervisor requests approval for an MCP call, the backend continues the response loop only
+for RepoScout's five explicitly allowlisted tools. Approval requests, arguments, intermediate text,
+and tool results remain in bounded backend history; the browser receives only the final assistant
+answer. Approval rounds are bounded to prevent an unending tool loop.
+
 If a request is cancelled or its final response cannot be confirmed, RepoScout does not retry it
 automatically. A state-changing tool might already have completed—especially an append-only note—so
 the user is directed to check My Projects before retrying.

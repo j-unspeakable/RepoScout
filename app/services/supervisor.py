@@ -83,6 +83,16 @@ class SupervisorClientProtocol(Protocol):
 
 class SupervisorClient:
     _MAX_RESPONSE_BYTES = 512_000
+    _MAX_MCP_APPROVAL_ROUNDS = 8
+    _ALLOWED_MCP_TOOLS = frozenset(
+        {
+            "search_projects",
+            "get_project_details",
+            "save_project",
+            "update_project_status",
+            "add_project_note",
+        }
+    )
 
     def __init__(
         self,
@@ -106,9 +116,61 @@ class SupervisorClient:
             await self._client.aclose()
 
     async def send(self, input_items: list[dict[str, Any]]) -> SupervisorResult:
+        request_input = deepcopy(input_items)
+        replay_items: list[dict[str, Any]] = []
+        approval_rounds = 0
+
+        while True:
+            output = await self._send_once(
+                request_input,
+                uncertain_before_request=bool(replay_items),
+            )
+            approval_responses = self._approval_responses(output)
+            if approval_responses:
+                if approval_rounds >= self._MAX_MCP_APPROVAL_ROUNDS:
+                    raise SupervisorBadGatewayError(
+                        UNCERTAIN_COMPLETION_MESSAGE,
+                        uncertain=True,
+                    )
+                approval_rounds += 1
+                continuation_items = self._interleave_approval_responses(
+                    output,
+                    approval_responses,
+                )
+                replay_items.extend(deepcopy(continuation_items))
+                request_input.extend(deepcopy(continuation_items))
+                continue
+
+            replay_items.extend(deepcopy(output))
+            if approval_rounds and not any(
+                item.get("type") == "function_call_output" for item in output
+            ):
+                raise SupervisorBadGatewayError(
+                    UNCERTAIN_COMPLETION_MESSAGE,
+                    uncertain=True,
+                )
+            answer = self._assistant_text(output)
+            if not answer:
+                raise SupervisorBadGatewayError(
+                    UNCERTAIN_COMPLETION_MESSAGE,
+                    uncertain=True,
+                )
+            return SupervisorResult(answer=answer, output_items=replay_items)
+
+    async def _send_once(
+        self,
+        input_items: list[dict[str, Any]],
+        *,
+        uncertain_before_request: bool,
+    ) -> list[dict[str, Any]]:
         try:
             url, headers = await asyncify(self._request_context)()
         except Exception as exc:
+            if uncertain_before_request:
+                raise SupervisorUnavailableError(
+                    UNCERTAIN_COMPLETION_MESSAGE,
+                    uncertain=True,
+                ) from exc
             raise SupervisorUnavailableError("Ask RepoScout authentication is unavailable") from exc
 
         headers = {**headers, "Accept": "application/json", "Content-Type": "application/json"}
@@ -165,13 +227,50 @@ class SupervisorClient:
                 UNCERTAIN_COMPLETION_MESSAGE,
                 uncertain=True,
             )
-        answer = self._assistant_text(output)
-        if not answer:
-            raise SupervisorBadGatewayError(
-                UNCERTAIN_COMPLETION_MESSAGE,
-                uncertain=True,
+        return output
+
+    @classmethod
+    def _approval_responses(cls, output: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        responses: list[dict[str, Any]] = []
+        identifiers: set[str] = set()
+        for item in output:
+            if item.get("type") != "mcp_approval_request":
+                continue
+            identifier = item.get("id")
+            tool_name = item.get("name")
+            if (
+                not isinstance(identifier, str)
+                or not identifier.strip()
+                or identifier in identifiers
+                or tool_name not in cls._ALLOWED_MCP_TOOLS
+            ):
+                raise SupervisorBadGatewayError(
+                    UNCERTAIN_COMPLETION_MESSAGE,
+                    uncertain=True,
+                )
+            identifiers.add(identifier)
+            responses.append(
+                {
+                    "type": "mcp_approval_response",
+                    "id": identifier,
+                    "approval_request_id": identifier,
+                    "approve": True,
+                }
             )
-        return SupervisorResult(answer=answer, output_items=deepcopy(output))
+        return responses
+
+    @staticmethod
+    def _interleave_approval_responses(
+        output: list[dict[str, Any]],
+        responses: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        responses_by_request = {response["approval_request_id"]: response for response in responses}
+        continuation: list[dict[str, Any]] = []
+        for item in output:
+            continuation.append(item)
+            if item.get("type") == "mcp_approval_request":
+                continuation.append(responses_by_request[item["id"]])
+        return continuation
 
     def _request_context(self) -> tuple[str, dict[str, str]]:
         if self._workspace is None:

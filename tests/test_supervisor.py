@@ -45,6 +45,30 @@ def _completed_response(answer: str = "Use owner/project.") -> dict[str, Any]:
     }
 
 
+def _approval_response(
+    identifier: str,
+    tool_name: str = "search_projects",
+) -> dict[str, Any]:
+    return {
+        "id": f"response-{identifier}",
+        "status": "completed",
+        "output": [
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "I'll use RepoScout."}],
+            },
+            {
+                "type": "mcp_approval_request",
+                "id": identifier,
+                "name": tool_name,
+                "server_label": "mcp-repo-scout",
+                "arguments": '{"query":"data engineering"}',
+            },
+        ],
+    }
+
+
 class FakeWorkspaceConfig:
     host = "https://workspace.example"
 
@@ -151,6 +175,226 @@ async def test_supervisor_client_uses_asyncify_and_parses_final_text(
         "input": [{"type": "message", "role": "user", "content": "Find RAG"}],
         "stream": False,
     }
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_supervisor_client_approves_mcp_and_returns_only_final_answer() -> None:
+    requests: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = __import__("json").loads(request.content)
+        requests.append(payload)
+        if len(requests) == 1:
+            approval_payload = _approval_response("approval-1")
+            approval_payload["output"].append(
+                {
+                    "type": "mcp_approval_request",
+                    "id": "approval-2",
+                    "name": "get_project_details",
+                    "server_label": "mcp-repo-scout",
+                    "arguments": '{"repo_id":42}',
+                }
+            )
+            return httpx.Response(200, json=approval_payload)
+        return httpx.Response(
+            200,
+            json={
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "function_call_output",
+                        "call_id": "approval-1",
+                        "output": '{"projects":[]}',
+                    },
+                    {
+                        "type": "function_call_output",
+                        "call_id": "approval-2",
+                        "output": '{"repo_id":42}',
+                    },
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "No matches."}],
+                    },
+                ],
+            },
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = SupervisorClient(
+        Settings(app_env=AppEnvironment.TEST, supervisor_endpoint_name="endpoint"),
+        workspace_client=FakeWorkspace(),
+        client=http_client,
+    )
+    original_input = [
+        {"type": "message", "role": "user", "content": "Find data engineering projects"}
+    ]
+
+    result = await client.send(original_input)
+
+    assert result.answer == "No matches."
+    assert len(requests) == 2
+    assert requests[0]["input"] == original_input
+    assert [item["type"] for item in requests[1]["input"][-5:]] == [
+        "message",
+        "mcp_approval_request",
+        "mcp_approval_response",
+        "mcp_approval_request",
+        "mcp_approval_response",
+    ]
+    assert requests[1]["input"][-4]["id"] == "approval-1"
+    assert requests[1]["input"][-3]["approval_request_id"] == "approval-1"
+    assert requests[1]["input"][-2]["id"] == "approval-2"
+    assert requests[1]["input"][-1]["approval_request_id"] == "approval-2"
+    assert [item["type"] for item in result.output_items] == [
+        "message",
+        "mcp_approval_request",
+        "mcp_approval_response",
+        "mcp_approval_request",
+        "mcp_approval_response",
+        "function_call_output",
+        "function_call_output",
+        "message",
+    ]
+    assert "I'll use RepoScout." not in result.answer
+    await http_client.aclose()
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "search_projects",
+        "get_project_details",
+        "save_project",
+        "update_project_status",
+        "add_project_note",
+    ],
+)
+def test_supervisor_client_approval_allowlist(tool_name: str) -> None:
+    response = SupervisorClient._approval_responses(
+        _approval_response("approval-1", tool_name)["output"]
+    )
+
+    assert response == [
+        {
+            "type": "mcp_approval_response",
+            "id": "approval-1",
+            "approval_request_id": "approval-1",
+            "approve": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_supervisor_client_rejects_unknown_or_malformed_mcp_approvals() -> None:
+    payloads = [
+        _approval_response("approval-1", "delete_project"),
+        _approval_response("", "search_projects"),
+        {
+            "status": "completed",
+            "output": [
+                *_approval_response("duplicate", "search_projects")["output"],
+                {
+                    "type": "mcp_approval_request",
+                    "id": "duplicate",
+                    "name": "get_project_details",
+                },
+            ],
+        },
+    ]
+
+    for payload in payloads:
+        calls = 0
+
+        def handler(
+            request: httpx.Request, response_payload: dict[str, Any] = payload
+        ) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(200, json=response_payload)
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        client = SupervisorClient(
+            Settings(app_env=AppEnvironment.TEST, supervisor_endpoint_name="endpoint"),
+            workspace_client=FakeWorkspace(),
+            client=http_client,
+        )
+
+        with pytest.raises(SupervisorBadGatewayError) as caught:
+            await client.send([{"role": "user", "content": "find projects"}])
+
+        assert caught.value.uncertain is True
+        assert calls == 1
+        await http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_supervisor_client_bounds_mcp_approval_rounds() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json=_approval_response(f"approval-{calls}"))
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = SupervisorClient(
+        Settings(app_env=AppEnvironment.TEST, supervisor_endpoint_name="endpoint"),
+        workspace_client=FakeWorkspace(),
+        client=http_client,
+    )
+    client._MAX_MCP_APPROVAL_ROUNDS = 2
+
+    with pytest.raises(SupervisorBadGatewayError) as caught:
+        await client.send([{"role": "user", "content": "find projects"}])
+
+    assert caught.value.uncertain is True
+    assert calls == 3
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_supervisor_client_rejects_message_without_result_after_approval() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(200, json=_approval_response("approval-1"))
+        return httpx.Response(
+            200,
+            json={
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": "Invalid approval response. Internal detail.",
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = SupervisorClient(
+        Settings(app_env=AppEnvironment.TEST, supervisor_endpoint_name="endpoint"),
+        workspace_client=FakeWorkspace(),
+        client=http_client,
+    )
+
+    with pytest.raises(SupervisorBadGatewayError) as caught:
+        await client.send([{"role": "user", "content": "find projects"}])
+
+    assert caught.value.uncertain is True
+    assert "Internal detail" not in str(caught.value)
+    assert calls == 2
     await http_client.aclose()
 
 
