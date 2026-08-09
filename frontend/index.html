@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#07110f">
+    <meta
+      name="description"
+      content="Discover open-source projects using evidence from their README documentation."
+    >
+    <title>RepoScout · Open-source project discovery</title>
+    <link rel="stylesheet" href="./assets/styles.css">
+    <script type="module" src="./assets/app.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#workspace">Skip to search</a>
+
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="#discover" aria-label="RepoScout home">
+          <span class="brand-mark" aria-hidden="true">R</span>
+          <span>RepoScout</span>
+        </a>
+        <nav class="primary-nav" aria-label="Primary navigation">
+          <a href="#discover" data-nav-view="discover">Discover</a>
+          <a href="#ask" data-nav-view="ask">Ask RepoScout</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="workspace">
+      <section class="hero" aria-labelledby="hero-title">
+        <p class="eyebrow">Open-source discovery, grounded in real documentation</p>
+        <h1 id="hero-title">Find projects worth exploring.</h1>
+        <p class="hero-copy">
+          Describe what you want to learn or build. RepoScout searches indexed README evidence
+          and surfaces projects that fit your goal.
+        </p>
+      </section>
+
+      <section class="corpus-section" aria-labelledby="corpus-title">
+        <div class="section-heading-row">
+          <div>
+            <p class="section-kicker">Search readiness</p>
+            <h2 id="corpus-title">A growing open-source knowledge base</h2>
+          </div>
+          <button id="corpus-retry" class="text-button" type="button" hidden>Retry metrics</button>
+        </div>
+
+        <div id="corpus-metrics" class="metric-grid" aria-busy="true">
+          <article class="metric-card">
+            <span class="metric-label">Repositories collected</span>
+            <strong id="metric-repositories" class="metric-value metric-loading">—</strong>
+            <span class="metric-context">Repositories collected from GitHub</span>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">Searchable repositories</span>
+            <strong id="metric-searchable" class="metric-value metric-loading">—</strong>
+            <span class="metric-context">Repositories available for semantic search</span>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">Searchable chunks</span>
+            <strong id="metric-chunks" class="metric-value metric-loading">—</strong>
+            <span class="metric-context">Focused README passages available as evidence</span>
+          </article>
+        </div>
+        <p id="corpus-detail" class="corpus-detail" role="status" aria-live="polite">
+          Checking the searchable corpus…
+        </p>
+      </section>
+
+      <section class="search-shell" aria-label="RepoScout workspace">
+        <div class="mode-intro">
+          <div>
+            <p class="section-kicker">Explore the index</p>
+            <h2 id="mode-title">Discover Projects</h2>
+          </div>
+        </div>
+
+        <section id="discover-view" class="mode-view" data-view="discover" aria-labelledby="discover-title">
+          <div class="form-panel">
+            <div class="panel-heading">
+              <span class="panel-icon" aria-hidden="true">⌕</span>
+              <div>
+                <h3 id="discover-title">Discover projects</h3>
+                <p>Search by the outcome, technology, or problem you care about.</p>
+              </div>
+            </div>
+            <form id="discover-form" novalidate>
+              <div class="field field-wide">
+                <label for="discover-query">What do you want to learn or build?</label>
+                <textarea
+                  id="discover-query"
+                  name="query"
+                  rows="4"
+                  minlength="1"
+                  maxlength="500"
+                  required
+                  placeholder="A Python framework for reliable batch pipelines with observability"
+                ></textarea>
+                <span class="field-hint">Use natural language. Specific goals usually work best.</span>
+                <div class="example-searches" aria-label="Example searches">
+                  <span class="example-label">Try an example</span>
+                  <div class="example-query-list">
+                    <button class="example-query" type="button" data-query-target="discover-query">
+                      Learn RAG with Python
+                    </button>
+                    <button class="example-query" type="button" data-query-target="discover-query">
+                      Spark data pipelines
+                    </button>
+                    <button class="example-query" type="button" data-query-target="discover-query">
+                      AI agents with databases
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <fieldset class="filter-grid">
+                <legend>Optional filters</legend>
+                <div class="field">
+                  <label for="discover-language">Language</label>
+                  <input
+                    id="discover-language"
+                    name="language"
+                    type="text"
+                    maxlength="100"
+                    autocomplete="off"
+                    placeholder="Python"
+                  >
+                </div>
+                <div class="field">
+                  <label for="discover-stars">Minimum stars</label>
+                  <input
+                    id="discover-stars"
+                    name="minimum_stars"
+                    type="number"
+                    min="0"
+                    step="1"
+                    inputmode="numeric"
+                    placeholder="100"
+                  >
+                </div>
+              </fieldset>
+
+              <div class="form-actions">
+                <button class="primary-button" type="submit">
+                  <span class="button-label">Find projects</span>
+                  <span class="spinner" aria-hidden="true"></span>
+                </button>
+                <button class="cancel-button" type="button" hidden>Cancel</button>
+              </div>
+            </form>
+          </div>
+
+          <div
+            id="discover-status"
+            class="request-status"
+            role="status"
+            aria-live="polite"
+          ></div>
+          <div id="discover-results" class="results-stack" aria-label="Project results"></div>
+        </section>
+
+        <section id="ask-view" class="mode-view" data-view="ask" aria-labelledby="ask-title" hidden>
+          <div class="form-panel ask-form-panel">
+            <div class="panel-heading">
+              <span class="panel-icon" aria-hidden="true">✦</span>
+              <div>
+                <h3 id="ask-title">Ask RepoScout</h3>
+                <p>Get a concise answer grounded in the indexed projects and their README evidence.</p>
+              </div>
+            </div>
+            <form id="ask-form" novalidate>
+              <div class="field field-wide">
+                <label for="ask-query">What would you like RepoScout to help with?</label>
+                <textarea
+                  id="ask-query"
+                  name="query"
+                  rows="4"
+                  minlength="1"
+                  maxlength="500"
+                  required
+                  placeholder="Find beginner-friendly Python projects for learning RAG without a huge framework"
+                ></textarea>
+                <span class="field-hint">Answers cite the project evidence used to support recommendations.</span>
+              </div>
+
+              <fieldset class="filter-grid">
+                <legend>Optional filters</legend>
+                <div class="field">
+                  <label for="ask-language">Language</label>
+                  <input
+                    id="ask-language"
+                    name="language"
+                    type="text"
+                    maxlength="100"
+                    autocomplete="off"
+                    placeholder="Python"
+                  >
+                </div>
+                <div class="field">
+                  <label for="ask-stars">Minimum stars</label>
+                  <input
+                    id="ask-stars"
+                    name="minimum_stars"
+                    type="number"
+                    min="0"
+                    step="1"
+                    inputmode="numeric"
+                    placeholder="100"
+                  >
+                </div>
+              </fieldset>
+
+              <div class="form-actions">
+                <button class="primary-button" type="submit">
+                  <span class="button-label">Ask RepoScout</span>
+                  <span class="spinner" aria-hidden="true"></span>
+                </button>
+                <button class="cancel-button" type="button" hidden>Cancel</button>
+              </div>
+            </form>
+          </div>
+
+          <div id="ask-status" class="request-status" role="status" aria-live="polite"></div>
+          <div id="ask-results" class="results-stack" aria-label="RepoScout answer"></div>
+        </section>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>RepoScout recommendations are grounded in indexed open-source README documentation.</p>
+    </footer>
+  </body>
+</html>

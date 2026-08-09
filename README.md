@@ -207,4 +207,20 @@ Example semantic request:
 `/search/ask` sends the same ranked evidence to OpenRouter. The user query is the task; retrieved
 README text is untrusted evidence and cannot supply behavioral instructions. The response includes
 the selected projects and chunks so its repository claims can be checked. Agents, saved projects,
-frontend behavior, and conversation memory remain out of scope.
+and conversation memory remain out of scope.
+
+## Frontend
+
+RepoScout includes a framework-free dark interface at the application root. It provides Discover
+and Ask views, expandable README evidence, grounded citation navigation, and live corpus-readiness
+metrics from `GET /corpus/summary`. Run it locally with:
+
+```bash
+export APP_ENV=local
+uv run fastapi dev
+```
+
+Then open the URL printed by FastAPI. The committed HTML, CSS, and JavaScript are served by FastAPI
+without a separate frontend build. Assets and API requests use paths relative to the application
+base, so the same files work locally and behind a Databricks Apps proxy. The normal interface does
+not display embedding, vector-index, model-provider, OAuth, or database configuration details.

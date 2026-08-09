@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Request, status
 
 from app.config import Settings
+from app.services.corpus import CorpusService
 from app.services.ingestion import IngestionService
 from app.services.rag import RagService
 from app.services.retrieval import RetrievalService
@@ -18,6 +19,16 @@ async def get_ingestion_service(request: Request) -> IngestionService:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Ingestion dependencies are unavailable",
+        )
+    return service
+
+
+async def get_corpus_service(request: Request) -> CorpusService:
+    service: CorpusService | None = getattr(request.app.state, "corpus_service", None)
+    if service is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Corpus dependencies are unavailable",
         )
     return service
 
@@ -43,6 +54,7 @@ async def get_rag_service(request: Request) -> RagService:
 
 
 SettingsDep = Annotated[Settings, Depends(get_app_settings)]
+CorpusServiceDep = Annotated[CorpusService, Depends(get_corpus_service)]
 IngestionServiceDep = Annotated[IngestionService, Depends(get_ingestion_service)]
 RetrievalServiceDep = Annotated[RetrievalService, Depends(get_retrieval_service)]
 RagServiceDep = Annotated[RagService, Depends(get_rag_service)]

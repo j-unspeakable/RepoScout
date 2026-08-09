@@ -1,20 +1,25 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 
 from app.config import AppEnvironment, Settings, get_settings
 from app.database.credentials import LakebaseCredentialProvider
 from app.database.pool import LakebasePool
+from app.repositories.corpus import CorpusRepository
 from app.repositories.ingestion import IngestionRepository
 from app.repositories.search import SearchRepository
-from app.routers import health, ingestion, search
+from app.routers import corpus, health, ingestion, search
+from app.services.corpus import CorpusService
 from app.services.embeddings import SentenceTransformerEmbeddingService
 from app.services.github import GitHubService
 from app.services.ingestion import IngestionService
 from app.services.openrouter import OpenRouterClient
 from app.services.rag import RagService
 from app.services.retrieval import RetrievalService
+
+FRONTEND_DIRECTORY = Path(__file__).resolve().parent.parent / "frontend"
 
 
 @asynccontextmanager
@@ -38,6 +43,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     try:
         await database.open()
         ingestion_repository = IngestionRepository(database)
+        corpus_repository = CorpusRepository(database)
         search_repository = SearchRepository(database)
         embeddings = SentenceTransformerEmbeddingService()
         retrieval = RetrievalService(
@@ -46,6 +52,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
             settings.search_min_similarity,
         )
         application.state.ingestion_service = IngestionService(github, ingestion_repository)
+        application.state.corpus_service = CorpusService(corpus_repository)
         application.state.retrieval_service = retrieval
         application.state.rag_service = RagService(
             retrieval,
@@ -55,6 +62,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         application.state.ingestion_service = None
+        application.state.corpus_service = None
         application.state.retrieval_service = None
         application.state.rag_service = None
         if openrouter is not None:
@@ -71,11 +79,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     application.state.settings = settings or get_settings()
     application.state.ingestion_service = None
+    application.state.corpus_service = None
     application.state.retrieval_service = None
     application.state.rag_service = None
     application.include_router(health.router)
+    application.include_router(corpus.router)
     application.include_router(ingestion.router)
     application.include_router(search.router)
+    application.frontend("/", directory=FRONTEND_DIRECTORY, fallback=None)
     return application
 
 
