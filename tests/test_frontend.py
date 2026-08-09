@@ -157,6 +157,15 @@ def test_agent_chat_and_my_projects_frontend_contract() -> None:
     assert 'id="ask-transcript"' in page
     assert 'role="log"' in page
     assert 'id="new-conversation"' in page
+    assert 'id="chat-restart"' in page
+    assert "New chat" in page
+    assert "Start new chat to continue" in page
+    assert 'class="chat-surface"' in page
+    assert 'class="chat-composer-form"' in page
+    assert 'rows="1"' in page
+    assert 'aria-label="Send message"' in page
+    assert 'aria-label="Stop waiting"' in page
+    assert "Enter to send · Shift+Enter for a new line" in page
     assert 'id="projects-view"' in page
     assert 'id="projects-refresh"' in page
     assert "ask-language" not in page
@@ -171,9 +180,34 @@ def test_agent_chat_and_my_projects_frontend_contract() -> None:
     assert "Supervisor" not in page
     assert "MCP" not in page
     assert "UNCERTAIN_COMPLETION_MESSAGE" in script
+    assert "CANCELLED_COMPLETION_MESSAGE" in script
+    assert "Stopped waiting. If this request included saving a project" in script
     assert "Check My Projects before retrying" in script
     assert "setTimeout" not in script
     assert "typing-indicator" in styles
     assert "chat-transcript" in styles
+    assert "chat-action-slot" in styles
+    assert "max-height: 160px" in styles
+    assert "CHAT_ONBOARDING_MESSAGE" in script
+    assert "evidence-based details or comparisons" in script
+    assert "Interested, To Try, In Progress, or Completed" in script
+    assert "createChatOnboardingMessage" in script
+    assert "visibleMessages.length === 0" in script
+    assert "fragment.append(createChatOnboardingMessage())" in script
+    assert "message: CHAT_ONBOARDING_MESSAGE" not in script
+    assert "chatState.messages.push(CHAT_ONBOARDING_MESSAGE" not in script
+    assert "event.shiftKey" in script
+    assert "event.isComposing" in script
+    assert "event.keyCode === 229" in script
+    assert "form.requestSubmit()" in script
+    assert "Math.min(query.scrollHeight, MAX_CHAT_COMPOSER_HEIGHT)" in script
+    assert "restoreDraft(message)" in script
+    assert "requestActive || chatState.blocked" in script
+    assert "restart.hidden = !chatState.blocked" in script
+    assert 'restart.addEventListener("click", resetChatConversation)' in script
+    assert "scrollChatToLatest" in script
+    speaker_rule = re.search(r"\.chat-speaker\s*\{(?P<body>.*?)\}", styles, flags=re.DOTALL)
+    assert speaker_rule is not None
+    assert "text-transform" not in speaker_rule.group("body")
     assert "saved-project-card" in script
     assert "project-notes" in styles

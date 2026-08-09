@@ -2,8 +2,18 @@ const APPLICATION_BASE_URL = new URL("./", document.baseURI);
 const TOP_K = 5;
 const CHAT_SESSION_KEY = "reposcout.ask-session.v1";
 const MAX_VISIBLE_CHAT_MESSAGES = 24;
+const MAX_CHAT_COMPOSER_HEIGHT = 160;
 const UNCERTAIN_COMPLETION_MESSAGE =
   "RepoScout couldn't confirm the final response. A requested action may already have completed. Check My Projects before retrying.";
+const CANCELLED_COMPLETION_MESSAGE =
+  "Stopped waiting. If this request included saving a project, changing its status, or adding a note, that action may already have completed. Check My Projects before retrying.";
+const CHAT_ONBOARDING_MESSAGE = `Welcome to RepoScout. I can help you discover open-source GitHub projects and work with the evidence in their indexed README documentation.
+
+- Search for projects using a natural-language goal, then ask for evidence-based details or comparisons.
+- Save useful projects, add notes, and organize them as Interested, To Try, In Progress, or Completed.
+- Follow up naturally with requests such as “Tell me more about the second one,” “Compare those two,” or “Save it.”
+
+What would you like to find or organize?`;
 
 class ApiError extends Error {
   constructor(status, detail, retryAfter = null, uncertain = false) {
@@ -175,7 +185,13 @@ function showView(viewName, { moveFocus = false } = {}) {
   title.textContent = titles[viewName];
 
   for (const view of document.querySelectorAll("[data-view]")) {
-    view.hidden = view.dataset.view !== viewName;
+    const active = view.dataset.view === viewName;
+    view.hidden = !active;
+    if (active) {
+      view.classList.remove("is-entering");
+      void view.offsetWidth;
+      view.classList.add("is-entering");
+    }
   }
   for (const link of document.querySelectorAll("[data-nav-view]")) {
     if (link.dataset.navView === viewName) {
@@ -190,6 +206,8 @@ function showView(viewName, { moveFocus = false } = {}) {
   }
   if (viewName === "projects") {
     loadSavedProjects();
+  } else if (viewName === "ask") {
+    scrollChatToLatest(chatState.messages.length === 0);
   }
 }
 
@@ -271,7 +289,7 @@ function setStatus(node, message = "", kind = "") {
 }
 
 function createLoadingPanel() {
-  const panel = element("div", "loading-panel");
+  const panel = element("div", "loading-panel is-entering");
   panel.setAttribute("aria-hidden", "true");
   for (let index = 0; index < 4; index += 1) {
     panel.append(element("span", "skeleton-line"));
@@ -346,7 +364,7 @@ function evidenceDomId(project, chunk) {
 }
 
 function createProjectCard(project, citationTargets) {
-  const card = element("article", "project-card");
+  const card = element("article", "project-card is-entering");
   card.dataset.repoId = String(project.repo_id ?? "");
 
   const header = element("div", "project-header");
@@ -587,8 +605,11 @@ function persistChatSession() {
   }
 }
 
-function createChatMessage(message) {
-  const item = element("article", `chat-message is-${message.role}`);
+function createChatMessage(message, animate = false) {
+  const item = element(
+    "article",
+    `chat-message is-${message.role}${animate ? " is-entering" : ""}`,
+  );
   item.append(element("span", "chat-speaker", message.role === "user" ? "You" : "RepoScout"));
   const body = element("div", "chat-message-body");
   if (message.role === "assistant") {
@@ -597,6 +618,16 @@ function createChatMessage(message) {
     body.append(element("p", "", message.content));
   }
   item.append(body);
+  return item;
+}
+
+function createChatOnboardingMessage() {
+  const item = createChatMessage(
+    { role: "assistant", content: CHAT_ONBOARDING_MESSAGE },
+    true,
+  );
+  item.classList.add("is-onboarding");
+  item.setAttribute("aria-label", "RepoScout welcome");
   return item;
 }
 
@@ -612,7 +643,24 @@ function createChatLoadingMessage() {
   return item;
 }
 
-function renderChatTranscript(pendingUserMessage = null) {
+function prefersReducedMotion() {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function scrollChatToLatest(startAtTop = false) {
+  const transcript = document.querySelector("#ask-transcript");
+  if (!transcript) {
+    return;
+  }
+  window.requestAnimationFrame(() => {
+    transcript.scrollTo({
+      top: startAtTop ? 0 : transcript.scrollHeight,
+      behavior: prefersReducedMotion() ? "auto" : "smooth",
+    });
+  });
+}
+
+function renderChatTranscript(pendingUserMessage = null, { animateTail = 0 } = {}) {
   const transcript = document.querySelector("#ask-transcript");
   const fragment = document.createDocumentFragment();
   const visibleMessages = [...chatState.messages];
@@ -620,26 +668,18 @@ function renderChatTranscript(pendingUserMessage = null) {
     visibleMessages.push({ role: "user", content: pendingUserMessage });
   }
   if (visibleMessages.length === 0) {
-    const welcome = element("div", "chat-welcome");
-    welcome.append(
-      element("h4", "", "Start with a project goal"),
-      element(
-        "p",
-        "",
-        "Ask RepoScout to find or compare projects, then follow up to save one, change its status, or add a note.",
-      ),
-    );
-    fragment.append(welcome);
+    fragment.append(createChatOnboardingMessage());
   } else {
-    for (const message of visibleMessages) {
-      fragment.append(createChatMessage(message));
+    const animateFrom = Math.max(visibleMessages.length - animateTail, 0);
+    for (const [index, message] of visibleMessages.entries()) {
+      fragment.append(createChatMessage(message, index >= animateFrom));
     }
   }
   if (pendingUserMessage) {
     fragment.append(createChatLoadingMessage());
   }
   transcript.replaceChildren(fragment);
-  transcript.scrollTop = transcript.scrollHeight;
+  scrollChatToLatest(visibleMessages.length === 0);
 }
 
 function resetChatConversation() {
@@ -648,8 +688,11 @@ function resetChatConversation() {
   chatState.blocked = false;
   sessionStorage.removeItem(CHAT_SESSION_KEY);
   renderChatTranscript();
-  setStatus(document.querySelector("#ask-status"), "New conversation started.", "success");
-  document.querySelector("#ask-query").focus({ preventScroll: true });
+  setStatus(document.querySelector("#ask-status"), "New chat started.", "success");
+  const query = document.querySelector("#ask-query");
+  query.disabled = false;
+  query.dispatchEvent(new Event("input"));
+  query.focus({ preventScroll: true });
 }
 
 function validateAssistantMessage(message) {
@@ -664,10 +707,10 @@ function validateAssistantMessage(message) {
 
 function assistantErrorMessage(error) {
   if (error instanceof ApiError && error.status === 409) {
-    return "RepoScout is already working on this conversation. Wait for it to finish.";
+    return "RepoScout is already working on this chat. Wait for it to finish.";
   }
   if (error instanceof ApiError && error.status === 410) {
-    return "This conversation has expired. Start a new conversation to continue.";
+    return "This chat has expired. Start a new chat to continue.";
   }
   if (error instanceof ApiError && error.status === 422) {
     return "Check your message and try again.";
@@ -682,14 +725,72 @@ function setupAssistantChat() {
   const form = document.querySelector("#ask-form");
   const query = document.querySelector("#ask-query");
   const status = document.querySelector("#ask-status");
-  const cancel = form.querySelector(".cancel-button");
-  const submit = form.querySelector("button[type='submit']");
+  const send = form.querySelector(".chat-send-button");
+  const stop = form.querySelector(".chat-stop-button");
+  const reset = document.querySelector("#new-conversation");
+  const restart = document.querySelector("#chat-restart");
   let controller = null;
+  let composing = false;
+  let requestActive = false;
+
+  function resizeComposer() {
+    query.style.height = "auto";
+    const nextHeight = Math.min(query.scrollHeight, MAX_CHAT_COMPOSER_HEIGHT);
+    query.style.height = `${nextHeight}px`;
+    query.style.overflowY = query.scrollHeight > MAX_CHAT_COMPOSER_HEIGHT ? "auto" : "hidden";
+  }
+
+  function syncComposerControls() {
+    const hasMessage = query.value.trim().length > 0;
+    const canSend = hasMessage && !requestActive && !chatState.blocked;
+    send.hidden = !canSend;
+    send.disabled = !canSend;
+    stop.hidden = !requestActive;
+    query.disabled = requestActive || chatState.blocked;
+    reset.disabled = requestActive;
+    restart.hidden = !chatState.blocked;
+    form.setAttribute("aria-busy", String(requestActive));
+  }
+
+  function restoreDraft(message) {
+    query.value = message;
+    resizeComposer();
+  }
 
   restoreChatSession();
   renderChatTranscript();
-  document.querySelector("#new-conversation").addEventListener("click", resetChatConversation);
-  cancel.addEventListener("click", () => controller?.abort());
+  resizeComposer();
+  syncComposerControls();
+  reset.addEventListener("click", resetChatConversation);
+  restart.addEventListener("click", resetChatConversation);
+  stop.addEventListener("click", () => controller?.abort());
+  query.addEventListener("input", () => {
+    resizeComposer();
+    syncComposerControls();
+  });
+  query.addEventListener("compositionstart", () => {
+    composing = true;
+  });
+  query.addEventListener("compositionend", () => {
+    composing = false;
+    resizeComposer();
+    syncComposerControls();
+  });
+  query.addEventListener("keydown", (event) => {
+    if (
+      event.key !== "Enter" ||
+      event.shiftKey ||
+      event.isComposing ||
+      composing ||
+      event.keyCode === 229
+    ) {
+      return;
+    }
+    event.preventDefault();
+    if (query.value.trim() && !requestActive && !chatState.blocked) {
+      form.requestSubmit();
+    }
+  });
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -699,7 +800,7 @@ function setupAssistantChat() {
     if (chatState.blocked) {
       setStatus(
         status,
-        "Start a new conversation before sending another message. Your draft has been preserved.",
+        "Start a new chat before sending another message. Your draft has been preserved.",
         "error",
       );
       document.querySelector("#new-conversation").focus({ preventScroll: true });
@@ -716,8 +817,11 @@ function setupAssistantChat() {
     }
 
     controller = new AbortController();
-    setRequestLoading(form, true);
-    renderChatTranscript(message);
+    requestActive = true;
+    query.value = "";
+    resizeComposer();
+    syncComposerControls();
+    renderChatTranscript(message, { animateTail: 1 });
     setStatus(status, "RepoScout is working through your request. This may take several seconds…");
 
     try {
@@ -736,23 +840,28 @@ function setupAssistantChat() {
       );
       chatState.messages = chatState.messages.slice(-MAX_VISIBLE_CHAT_MESSAGES);
       persistChatSession();
-      query.value = "";
-      renderChatTranscript();
+      renderChatTranscript(null, { animateTail: 2 });
       setStatus(status, "");
     } catch (error) {
       renderChatTranscript();
+      restoreDraft(message);
+      const cancelled = error instanceof DOMException && error.name === "AbortError";
       const uncertain =
-        (error instanceof DOMException && error.name === "AbortError") ||
-        !(error instanceof ApiError) ||
-        error.uncertain;
+        cancelled || !(error instanceof ApiError) || error.uncertain;
       if (uncertain || (error instanceof ApiError && error.status === 410)) {
         chatState.blocked = true;
       }
-      setStatus(status, assistantErrorMessage(error), "error");
+      setStatus(status, cancelled ? CANCELLED_COMPLETION_MESSAGE : assistantErrorMessage(error), "error");
     } finally {
       controller = null;
-      setRequestLoading(form, false);
-      submit.focus({ preventScroll: true });
+      requestActive = false;
+      resizeComposer();
+      syncComposerControls();
+      if (chatState.blocked) {
+        restart.focus({ preventScroll: true });
+      } else {
+        query.focus({ preventScroll: true });
+      }
     }
   });
 }
@@ -775,7 +884,7 @@ function formatProjectDate(value) {
 }
 
 function createSavedProjectCard(project) {
-  const card = element("article", "project-card saved-project-card");
+  const card = element("article", "project-card saved-project-card is-entering");
   card.dataset.repoId = String(project.repo_id ?? "");
   const header = element("div", "project-header");
   header.append(element("h3", "", project.full_name || project.name || "Unnamed repository"));

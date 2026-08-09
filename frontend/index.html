@@ -35,8 +35,8 @@
         <p class="eyebrow">Open-source discovery, grounded in real documentation</p>
         <h1 id="hero-title">Find projects worth exploring.</h1>
         <p class="hero-copy">
-          Describe what you want to learn or build. RepoScout searches indexed README evidence
-          and surfaces projects that fit your goal.
+          Describe what you want to learn or build. RepoScout searches open-source GitHub
+          repositories and their README documentation to find projects that fit your goal.
         </p>
       </section>
 
@@ -172,44 +172,72 @@
                 <p>Find, compare, save, and organize projects through a natural conversation.</p>
               </div>
               <button id="new-conversation" class="text-button chat-reset" type="button">
-                New conversation
+                New chat
               </button>
             </div>
-            <div
-              id="ask-transcript"
-              class="chat-transcript"
-              role="log"
-              aria-live="polite"
-              aria-label="Ask RepoScout conversation"
-            ></div>
-            <form id="ask-form" novalidate>
-              <div class="field field-wide">
-                <label for="ask-query">What would you like RepoScout to help with?</label>
-                <textarea
-                  id="ask-query"
-                  name="query"
-                  rows="3"
-                  minlength="1"
-                  maxlength="2000"
-                  required
-                  placeholder="Find beginner-friendly Python projects for learning RAG without a huge framework"
-                ></textarea>
-                <span class="field-hint">
-                  Follow up naturally with requests such as “Tell me more about the second one” or “Save it.”
-                </span>
-              </div>
-
-              <div class="form-actions">
-                <button class="primary-button" type="submit">
-                  <span class="button-label">Send message</span>
-                  <span class="spinner" aria-hidden="true"></span>
-                </button>
-                <button class="cancel-button" type="button" hidden>Stop waiting</button>
-              </div>
-            </form>
+            <div class="chat-surface">
+              <div
+                id="ask-transcript"
+                class="chat-transcript"
+                role="log"
+                aria-live="polite"
+                aria-label="Ask RepoScout chat"
+              ></div>
+              <form id="ask-form" class="chat-composer-form" novalidate>
+                <label class="visually-hidden" for="ask-query">
+                  What would you like RepoScout to help with?
+                </label>
+                <div class="chat-composer">
+                  <textarea
+                    id="ask-query"
+                    name="query"
+                    rows="1"
+                    minlength="1"
+                    maxlength="2000"
+                    required
+                    enterkeyhint="send"
+                    placeholder="Message RepoScout"
+                  ></textarea>
+                  <span class="chat-action-slot">
+                    <button
+                      class="chat-send-button"
+                      type="submit"
+                      aria-label="Send message"
+                      title="Send message"
+                      disabled
+                      hidden
+                    >
+                      <span aria-hidden="true">↑</span>
+                    </button>
+                    <button
+                      class="chat-stop-button"
+                      type="button"
+                      aria-label="Stop waiting"
+                      title="Stop waiting"
+                      hidden
+                    >
+                      <span aria-hidden="true"></span>
+                    </button>
+                  </span>
+                </div>
+                <p class="chat-composer-hint">
+                  Enter to send · Shift+Enter for a new line
+                </p>
+              </form>
+            </div>
           </div>
 
-          <div id="ask-status" class="request-status" role="status" aria-live="polite"></div>
+          <div class="chat-recovery">
+            <div id="ask-status" class="request-status" role="status" aria-live="polite"></div>
+            <button
+              id="chat-restart"
+              class="secondary-button chat-recovery-button"
+              type="button"
+              hidden
+            >
+              Start new chat to continue
+            </button>
+          </div>
         </section>
 
         <section

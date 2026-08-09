@@ -63,6 +63,19 @@ a {
   display: none !important;
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .skip-link {
   position: fixed;
   z-index: 100;
@@ -315,6 +328,10 @@ main {
   padding: 28px;
 }
 
+.mode-view.is-entering {
+  animation: view-enter 180ms ease-out;
+}
+
 .form-panel {
   padding: 26px;
   border: 1px solid var(--border);
@@ -328,7 +345,7 @@ main {
 
 .chat-panel {
   display: grid;
-  gap: 22px;
+  gap: 18px;
 }
 
 .chat-panel .panel-heading {
@@ -340,39 +357,47 @@ main {
   white-space: nowrap;
 }
 
+.chat-surface {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--page);
+}
+
 .chat-transcript {
   display: grid;
   max-height: 570px;
   min-height: 210px;
   overflow-y: auto;
   padding: 20px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
   gap: 16px;
-  background: var(--page);
+  overscroll-behavior: contain;
   scroll-behavior: smooth;
 }
 
-.chat-welcome {
-  max-width: 620px;
-  margin: auto;
-  text-align: center;
+.chat-message.is-onboarding {
+  max-width: min(92%, 790px);
 }
 
-.chat-welcome h4 {
-  margin: 0 0 7px;
-  font-size: 1.05rem;
+.chat-message.is-onboarding .chat-message-body {
+  border-color: rgb(45 212 191 / 24%);
+  background: linear-gradient(145deg, var(--raised), rgb(45 212 191 / 5%));
 }
 
-.chat-welcome p {
-  margin: 0;
-  color: var(--muted);
+.chat-message.is-onboarding .chat-message-body > p:first-child {
+  color: var(--text);
+  font-weight: 750;
 }
 
 .chat-message {
   display: grid;
   max-width: min(82%, 760px);
   gap: 6px;
+}
+
+.chat-message.is-entering,
+.chat-message.is-pending {
+  animation: message-enter 180ms ease-out;
 }
 
 .chat-message.is-user {
@@ -387,8 +412,7 @@ main {
   color: var(--muted);
   font-size: 0.72rem;
   font-weight: 800;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
 }
 
 .chat-message.is-user .chat-speaker {
@@ -448,6 +472,124 @@ main {
 
 .typing-indicator span:nth-child(3) {
   animation-delay: 280ms;
+}
+
+.chat-composer-form {
+  display: block;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  background: var(--header);
+}
+
+.chat-composer {
+  display: flex;
+  min-height: 50px;
+  padding: 6px 6px 6px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  align-items: flex-end;
+  gap: 9px;
+  background: var(--page);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background 160ms ease;
+}
+
+.chat-composer:focus-within {
+  border-color: var(--accent-hover);
+  background: #091613;
+  box-shadow: 0 0 0 3px rgb(45 212 191 / 13%);
+}
+
+.chat-composer textarea {
+  min-height: 36px;
+  max-height: 160px;
+  padding: 7px 0 6px;
+  overflow-y: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  line-height: 1.45;
+  resize: none;
+}
+
+.chat-composer textarea:hover,
+.chat-composer textarea:focus {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.chat-composer textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.chat-action-slot {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  place-items: center;
+}
+
+.chat-send-button,
+.chat-stop-button {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  place-items: center;
+  color: var(--page);
+  background: var(--accent);
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+.chat-send-button {
+  font-size: 1.4rem;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.chat-send-button:hover:not(:disabled) {
+  background: #5eead4;
+  transform: translateY(-1px);
+}
+
+.chat-send-button:disabled {
+  cursor: default;
+}
+
+.chat-stop-button {
+  border-color: rgb(251 113 133 / 34%);
+  color: var(--error);
+  background: var(--error-soft);
+}
+
+.chat-stop-button span {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  background: currentcolor;
+}
+
+.chat-stop-button:hover {
+  border-color: var(--error);
+  color: #fda4af;
+}
+
+.chat-composer-hint {
+  margin: 7px 4px 0;
+  color: var(--muted);
+  font-size: 0.72rem;
 }
 
 .projects-toolbar {
@@ -803,6 +945,21 @@ textarea[aria-invalid="true"] {
   background: var(--accent-soft);
 }
 
+.chat-recovery {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.chat-recovery .request-status {
+  flex: 1;
+}
+
+.chat-recovery-button {
+  margin-top: 20px;
+  white-space: nowrap;
+}
+
 .results-stack {
   display: grid;
   margin-top: 20px;
@@ -946,6 +1103,11 @@ textarea[aria-invalid="true"] {
     border-color 160ms ease,
     transform 160ms ease,
     background 160ms ease;
+}
+
+.project-card.is-entering,
+.loading-panel.is-entering {
+  animation: card-enter 180ms ease-out;
 }
 
 .project-card:hover {
@@ -1187,6 +1349,39 @@ textarea[aria-invalid="true"] {
   }
 }
 
+@keyframes view-enter {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes message-enter {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (max-width: 760px) {
   .header-inner,
   main,
@@ -1233,6 +1428,16 @@ textarea[aria-invalid="true"] {
 
   .coverage-feedback {
     padding: 0 20px 20px;
+  }
+
+  .chat-recovery {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .chat-recovery-button {
+    margin-top: 0;
   }
 
   .coverage-prompt,
@@ -1298,6 +1503,10 @@ textarea[aria-invalid="true"] {
     padding: 14px;
   }
 
+  .chat-message.is-onboarding {
+    max-width: 100%;
+  }
+
   .corpus-section,
   .search-shell {
     border-radius: 16px;
@@ -1335,7 +1544,8 @@ textarea[aria-invalid="true"] {
 
   .metric-card:hover,
   .project-card:hover,
-  .primary-button:hover:not(:disabled) {
+  .primary-button:hover:not(:disabled),
+  .chat-send-button:hover:not(:disabled) {
     transform: none;
   }
 }
