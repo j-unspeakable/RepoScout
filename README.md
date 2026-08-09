@@ -126,11 +126,20 @@ TO "<APP_SERVICE_PRINCIPAL_CLIENT_ID>";
 GRANT SELECT, INSERT
 ON TABLE public.indexing_requests
 TO "<APP_SERVICE_PRINCIPAL_CLIENT_ID>";
+
+GRANT SELECT, INSERT, UPDATE
+ON TABLE public.saved_projects
+TO "<APP_SERVICE_PRINCIPAL_CLIENT_ID>";
+
+GRANT SELECT, INSERT
+ON TABLE public.project_notes
+TO "<APP_SERVICE_PRINCIPAL_CLIENT_ID>";
 ```
 
 These are the current least-privilege application grants: ingestion can read and upsert Section 1
-records, while semantic retrieval can read repositories and embedded chunks. The FastAPI app does
-not modify `repository_chunks`; the independently run Section 2 notebook owns that persistence.
+records, semantic retrieval can read repositories and embedded chunks, and the machine API can
+read and write saved-project state. The FastAPI app does not modify `repository_chunks`; the
+independently run Section 2 notebook owns that persistence.
 Verify the effective table grants with:
 
 ```sql
@@ -212,8 +221,46 @@ Example semantic request:
 
 `/search/ask` sends the same ranked evidence to OpenRouter. The user query is the task; retrieved
 README text is untrusted evidence and cannot supply behavioral instructions. The response includes
-the selected projects and chunks so its repository claims can be checked. Agents, saved projects,
-and conversation memory remain out of scope.
+the selected projects and chunks so its repository claims can be checked. Supervisor Agents, My
+Projects frontend controls, and conversation memory remain out of scope.
+
+## Section 4: MCP tools
+
+The independent [`mcp-server`](mcp-server/) project exposes five thin tools: semantic project
+search, bounded project details, idempotent project saving, status updates, and project notes. It
+calls RepoScout only through `/api/tools/*`; it has no Lakebase, psycopg, embedding, or vector-search
+implementation of its own.
+
+For local development, start RepoScout and configure the MCP application with its direct URL:
+
+```bash
+export REPOSCOUT_API_APP_URL=http://127.0.0.1:8000
+cd mcp-server
+uv sync --all-groups
+uv run reposcout-mcp
+```
+
+For Databricks, deploy the second application as `mcp-reposcout`. Attach the existing RepoScout
+application as a Databricks App Resource with **Can use** permission and resource key
+`reposcout-api`. The included MCP `app.yaml` injects the target app name into
+`REPOSCOUT_APP_NAME`. The MCP app resolves its URL through the Databricks SDK and generates
+fresh service-principal authentication headers for every request; no bearer token is configured,
+cached, or logged.
+
+The capstone stores project state under one internal user key, `default`. That key is centralized
+behind a backend dependency and is absent from HTTP and MCP contracts, allowing a real identity
+resolver to replace it later. Notes and status changes require a prior save. Repeating a save
+returns the existing record without changing its status or timestamps.
+
+Run the independent MCP checks with:
+
+```bash
+cd mcp-server
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run ty check
+```
 
 ## Frontend
 

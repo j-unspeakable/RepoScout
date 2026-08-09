@@ -1,0 +1,11 @@
+command:
+  - uv
+  - run
+  - --frozen
+  - reposcout-mcp
+
+env:
+  - name: REPOSCOUT_APP_NAME
+    valueFrom: reposcout
+  - name: REPOSCOUT_API_TIMEOUT_SECONDS
+    value: "45"

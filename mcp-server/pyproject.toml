@@ -1,0 +1,44 @@
+[project]
+name = "reposcout-mcp"
+version = "0.1.0"
+description = "RepoScout MCP tools for Databricks AI Playground"
+requires-python = ">=3.12"
+dependencies = [
+    "databricks-sdk>=0.89.0",
+    "fastmcp==3.2.0",
+    "httpx>=0.28.1",
+    "pydantic-settings>=2.10.0",
+]
+
+[project.scripts]
+reposcout-mcp = "reposcout_mcp.server:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.1.0",
+    "ruff>=0.12.0",
+    "ty>=0.0.1a16",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/reposcout_mcp"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ty.environment]
+python-version = "3.12"

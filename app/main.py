@@ -10,14 +10,16 @@ from app.database.pool import LakebasePool
 from app.repositories.corpus import CorpusRepository
 from app.repositories.indexing_requests import IndexingRequestRepository
 from app.repositories.ingestion import IngestionRepository
+from app.repositories.project_tools import ProjectToolsRepository
 from app.repositories.search import SearchRepository
-from app.routers import corpus, health, indexing_requests, ingestion, search
+from app.routers import corpus, health, indexing_requests, ingestion, search, tools
 from app.services.corpus import CorpusService
 from app.services.embeddings import SentenceTransformerEmbeddingService
 from app.services.github import GitHubService
 from app.services.indexing_requests import IndexingRequestService
 from app.services.ingestion import IngestionService
 from app.services.openrouter import OpenRouterClient
+from app.services.project_tools import ProjectToolsService
 from app.services.rag import RagService
 from app.services.retrieval import RetrievalService
 
@@ -47,6 +49,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         ingestion_repository = IngestionRepository(database)
         corpus_repository = CorpusRepository(database)
         indexing_request_repository = IndexingRequestRepository(database)
+        project_tools_repository = ProjectToolsRepository(database)
         search_repository = SearchRepository(database)
         embeddings = SentenceTransformerEmbeddingService()
         retrieval = RetrievalService(
@@ -60,6 +63,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
             indexing_request_repository
         )
         application.state.retrieval_service = retrieval
+        application.state.project_tools_service = ProjectToolsService(project_tools_repository)
         application.state.rag_service = RagService(
             retrieval,
             openrouter,
@@ -71,6 +75,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         application.state.corpus_service = None
         application.state.indexing_request_service = None
         application.state.retrieval_service = None
+        application.state.project_tools_service = None
         application.state.rag_service = None
         if openrouter is not None:
             await openrouter.close()
@@ -89,12 +94,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.state.corpus_service = None
     application.state.indexing_request_service = None
     application.state.retrieval_service = None
+    application.state.project_tools_service = None
     application.state.rag_service = None
     application.include_router(health.router)
     application.include_router(corpus.router)
     application.include_router(indexing_requests.router)
     application.include_router(ingestion.router)
     application.include_router(search.router)
+    application.include_router(tools.router)
     application.frontend("/", directory=FRONTEND_DIRECTORY, fallback=None)
     return application
 

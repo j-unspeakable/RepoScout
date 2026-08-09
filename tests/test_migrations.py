@@ -11,6 +11,9 @@ CHUNKS_MIGRATION_PATH = (
 INDEXING_REQUESTS_MIGRATION_PATH = (
     Path(__file__).parents[1] / "alembic" / "versions" / "20260809_0003_indexing_requests.py"
 )
+SAVED_PROJECTS_MIGRATION_PATH = (
+    Path(__file__).parents[1] / "alembic" / "versions" / "20260809_0004_saved_projects.py"
+)
 
 
 def _load_migration(
@@ -116,3 +119,33 @@ def test_indexing_requests_downgrade_drops_only_feedback_table(monkeypatch) -> N
     migration.downgrade()
 
     assert statements == ["DROP TABLE indexing_requests"]
+
+
+def test_saved_projects_migration_has_user_state_constraints(monkeypatch) -> None:
+    migration = _load_migration(SAVED_PROJECTS_MIGRATION_PATH, "saved_projects_migration")
+    statements: list[str] = []
+    monkeypatch.setattr(migration.op, "execute", statements.append)
+
+    migration.upgrade()
+    sql = "\n".join(statements)
+
+    assert migration.revision == "20260809_0004"
+    assert migration.down_revision == "20260809_0003"
+    assert "CREATE TABLE saved_projects" in sql
+    assert "REFERENCES repositories(repo_id) ON DELETE CASCADE" in sql
+    assert "UNIQUE (user_key, repo_id)" in sql
+    assert "status TEXT NOT NULL DEFAULT 'INTERESTED'" in sql
+    assert "'INTERESTED', 'TO_TRY', 'IN_PROGRESS', 'COMPLETED'" in sql
+    assert "CREATE TABLE project_notes" in sql
+    assert "REFERENCES saved_projects(saved_project_id) ON DELETE CASCADE" in sql
+    assert "char_length(note_text) <= 2000" in sql
+
+
+def test_saved_projects_downgrade_drops_notes_first(monkeypatch) -> None:
+    migration = _load_migration(SAVED_PROJECTS_MIGRATION_PATH, "saved_projects_downgrade")
+    statements: list[str] = []
+    monkeypatch.setattr(migration.op, "execute", statements.append)
+
+    migration.downgrade()
+
+    assert statements == ["DROP TABLE project_notes", "DROP TABLE saved_projects"]

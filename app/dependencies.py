@@ -6,6 +6,7 @@ from app.config import Settings
 from app.services.corpus import CorpusService
 from app.services.indexing_requests import IndexingRequestService
 from app.services.ingestion import IngestionService
+from app.services.project_tools import ProjectToolsService
 from app.services.rag import RagService
 from app.services.retrieval import RetrievalService
 
@@ -66,9 +67,26 @@ async def get_rag_service(request: Request) -> RagService:
     return service
 
 
+async def get_project_tools_service(request: Request) -> ProjectToolsService:
+    service: ProjectToolsService | None = getattr(request.app.state, "project_tools_service", None)
+    if service is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Project tool dependencies are unavailable",
+        )
+    return service
+
+
+async def get_project_user_key() -> str:
+    """Return the capstone user scope from one replaceable identity boundary."""
+    return "default"
+
+
 SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 CorpusServiceDep = Annotated[CorpusService, Depends(get_corpus_service)]
 IndexingRequestServiceDep = Annotated[IndexingRequestService, Depends(get_indexing_request_service)]
 IngestionServiceDep = Annotated[IngestionService, Depends(get_ingestion_service)]
 RetrievalServiceDep = Annotated[RetrievalService, Depends(get_retrieval_service)]
 RagServiceDep = Annotated[RagService, Depends(get_rag_service)]
+ProjectToolsServiceDep = Annotated[ProjectToolsService, Depends(get_project_tools_service)]
+ProjectUserKeyDep = Annotated[str, Depends(get_project_user_key)]

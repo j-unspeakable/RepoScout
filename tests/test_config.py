@@ -103,7 +103,10 @@ def test_pool_size_validation() -> None:
         Settings(app_env=AppEnvironment.TEST, db_pool_min_size=5, db_pool_max_size=2)
 
 
-def test_search_threshold_is_bounded_and_openrouter_key_is_optional() -> None:
+def test_search_threshold_is_bounded_and_openrouter_key_is_optional(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_settings_environment(monkeypatch)
     settings = Settings(app_env=AppEnvironment.TEST)
 
     assert settings.search_min_similarity == 0.25
