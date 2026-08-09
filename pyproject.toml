@@ -1,6 +1,9 @@
 [project]
 name = "reposcout"
 version = "0.1.0"
+description = "AI-powered discovery of open-source projects using semantic search and grounded README evidence."
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.16.0",

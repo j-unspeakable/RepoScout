@@ -60,6 +60,7 @@ async def test_frontend_files_and_api_routes_remain_available(
     assert docs.status_code == 200
     assert schema.status_code == 200
     assert "/corpus/summary" in schema.json()["paths"]
+    assert "/indexing-requests" in schema.json()["paths"]
     assert health.json() == {"status": "ok", "environment": "test"}
 
 
@@ -73,6 +74,7 @@ def test_frontend_uses_one_proxy_safe_application_base() -> None:
     assert "fetch(apiUrl(relativePath)" in script
     assert script.count("fetch(") == 1
     assert 'apiRequest("corpus/summary")' in script
+    assert 'apiRequest("indexing-requests"' in script
     assert 'endpoint: "search/semantic"' in script
     assert 'endpoint: "search/ask"' in script
     assert 'application.frontend("/", directory=FRONTEND_DIRECTORY, fallback=None)' in main_source
@@ -118,3 +120,14 @@ def test_frontend_contract_is_safe_accessible_and_self_contained() -> None:
     assert "AI agents with databases" in page
     assert "setupExampleQueries" in script
     assert "query.value = button.textContent.trim()" in script
+    assert 'id="indexing-request-form"' in page
+    assert 'id="coverage-toggle"' in page
+    assert 'id="coverage-panel"' in page
+    assert "What were you hoping to find?" in page
+    assert "Request more coverage" in page
+    assert "suggested_repository_url" not in page
+    assert "suggested_repository_url" not in script
+    assert 'apiRequest("ingestions"' not in script
+    assert "Request received for review." in script
+    assert "status.dataset.completed" in script
+    assert "setTimeout" not in script

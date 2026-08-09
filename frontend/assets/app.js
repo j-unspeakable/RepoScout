@@ -100,7 +100,7 @@ async function loadCorpusSummary() {
     setMetricValue(document.querySelector("#metric-chunks"), summary.searchable_chunks);
     detail.textContent = `${formatCount(summary.readmes_available)} repositories have README content available · Last indexed ${formatIndexedTime(summary.last_indexed_at)}`;
   } catch {
-    detail.textContent = "Corpus readiness is temporarily unavailable. Search is still available.";
+    detail.textContent = "Search readiness is temporarily unavailable. Search is still available.";
     retry.hidden = false;
   } finally {
     metrics.setAttribute("aria-busy", "false");
@@ -226,9 +226,17 @@ function showLoading(results, count = 2) {
   results.setAttribute("aria-busy", "true");
 }
 
-function showEmpty(results, title, message) {
+function addCoverageAction(container, searchQuery) {
+  const action = element("button", "coverage-action-button", "Request more coverage");
+  action.type = "button";
+  action.addEventListener("click", () => openCoveragePanel(searchQuery));
+  container.append(action);
+}
+
+function showEmpty(results, title, message, coverageQuery = "") {
   const panel = element("div", "empty-panel");
   panel.append(element("h3", "", title), element("p", "", message));
+  addCoverageAction(panel, coverageQuery);
   results.replaceChildren(panel);
 }
 
@@ -415,9 +423,13 @@ function renderAnswerBody(container, answer, citationTargets) {
   }
 }
 
-function renderProjects(projects, results, { emptyTitle, emptyMessage } = {}) {
+function renderProjects(
+  projects,
+  results,
+  { emptyTitle, emptyMessage, coverageQuery = "" } = {},
+) {
   if (!Array.isArray(projects) || projects.length === 0) {
-    showEmpty(results, emptyTitle, emptyMessage);
+    showEmpty(results, emptyTitle, emptyMessage, coverageQuery);
     return;
   }
   const targets = new Map();
@@ -453,9 +465,144 @@ function renderAskResponse(payload, results) {
       element("h3", "", "No supporting projects found"),
       element("p", "", "Try broader wording or remove one of the optional filters."),
     );
+    addCoverageAction(empty, payload.query || "");
     fragment.append(empty);
   }
   results.replaceChildren(fragment);
+}
+
+function activeSearchQuery() {
+  const queryId = activeViewFromHash() === "ask" ? "#ask-query" : "#discover-query";
+  return document.querySelector(queryId).value.trim();
+}
+
+function clearIndexingRequestStatus() {
+  const status = document.querySelector("#indexing-request-status");
+  delete status.dataset.completed;
+  setStatus(status, "");
+}
+
+function openCoveragePanel(prefill = "") {
+  const panel = document.querySelector("#coverage-panel");
+  const toggle = document.querySelector("#coverage-toggle");
+  const query = document.querySelector("#indexing-search-query");
+  const status = document.querySelector("#indexing-request-status");
+
+  if (status.dataset.completed === "true") {
+    clearIndexingRequestStatus();
+  }
+  panel.hidden = false;
+  toggle.setAttribute("aria-expanded", "true");
+  if (!query.value.trim() && prefill.trim()) {
+    query.value = prefill.trim();
+  }
+  query.focus({ preventScroll: true });
+}
+
+function dismissCoveragePanel() {
+  document.querySelector("#coverage-panel").hidden = true;
+  document.querySelector("#coverage-toggle").setAttribute("aria-expanded", "false");
+  clearIndexingRequestStatus();
+  document.querySelector("#coverage-toggle").focus({ preventScroll: true });
+}
+
+function validateIndexingRequest(form) {
+  const query = form.querySelector("textarea[name='search_query']");
+  const notes = form.querySelector("textarea[name='notes']");
+  const searchQuery = query.value.trim();
+  const context = notes.value.trim();
+  query.setAttribute("aria-invalid", "false");
+  notes.setAttribute("aria-invalid", "false");
+
+  if (!searchQuery) {
+    query.setAttribute("aria-invalid", "true");
+    query.focus();
+    return { error: "Describe what you were hoping to find." };
+  }
+  if (searchQuery.length > 500) {
+    query.setAttribute("aria-invalid", "true");
+    query.focus();
+    return { error: "Keep the requested topic to 500 characters or fewer." };
+  }
+  if (context.length > 2000) {
+    notes.setAttribute("aria-invalid", "true");
+    notes.focus();
+    return { error: "Keep the additional context to 2,000 characters or fewer." };
+  }
+  return {
+    payload: {
+      search_query: searchQuery,
+      notes: context || null,
+    },
+  };
+}
+
+function setIndexingRequestLoading(form, loading) {
+  const submit = form.querySelector("button[type='submit']");
+  submit.disabled = loading;
+  submit.classList.toggle("is-loading", loading);
+  form.setAttribute("aria-busy", String(loading));
+  for (const control of form.querySelectorAll("textarea")) {
+    control.disabled = loading;
+  }
+}
+
+function setupIndexingRequest() {
+  const form = document.querySelector("#indexing-request-form");
+  const status = document.querySelector("#indexing-request-status");
+  const toggle = document.querySelector("#coverage-toggle");
+  let submitting = false;
+
+  toggle.addEventListener("click", () => {
+    if (document.querySelector("#coverage-panel").hidden) {
+      openCoveragePanel(activeSearchQuery());
+    } else {
+      dismissCoveragePanel();
+    }
+  });
+  document.querySelector("#coverage-dismiss").addEventListener("click", dismissCoveragePanel);
+  form.addEventListener("input", () => {
+    if (status.dataset.completed === "true") {
+      clearIndexingRequestStatus();
+    }
+  });
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (submitting) {
+      return;
+    }
+    if (status.dataset.completed === "true") {
+      clearIndexingRequestStatus();
+    }
+
+    const validation = validateIndexingRequest(form);
+    if (validation.error) {
+      setStatus(status, validation.error, "error");
+      return;
+    }
+
+    submitting = true;
+    delete status.dataset.completed;
+    setIndexingRequestLoading(form, true);
+    setStatus(status, "Submitting your request for review…");
+    try {
+      await apiRequest("indexing-requests", {
+        method: "POST",
+        body: JSON.stringify(validation.payload),
+      });
+      form.reset();
+      setStatus(status, "Request received for review.", "success");
+      status.dataset.completed = "true";
+      status.setAttribute("tabindex", "-1");
+      status.focus({ preventScroll: true });
+    } catch (error) {
+      setStatus(status, friendlyError(error), "error");
+    } finally {
+      submitting = false;
+      setIndexingRequestLoading(form, false);
+    }
+  });
 }
 
 function setRequestLoading(form, loading) {
@@ -516,6 +663,7 @@ function setupSearchMode({ formId, statusId, resultsId, endpoint, mode }) {
         renderProjects(response.projects, results, {
           emptyTitle: "No matching projects yet",
           emptyMessage: "Try broader wording, another language, or a lower star filter.",
+          coverageQuery: payload.query,
         });
       }
       setStatus(status, "");
@@ -541,6 +689,7 @@ window.addEventListener("hashchange", () => showView(activeViewFromHash(), { mov
 
 normalizeInitialHash();
 setupExampleQueries();
+setupIndexingRequest();
 setupSearchMode({
   formId: "discover-form",
   statusId: "discover-status",

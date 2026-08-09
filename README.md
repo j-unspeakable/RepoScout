@@ -15,6 +15,8 @@ Lakebase.
   chunk similarity, with optional language and minimum-star filters.
 - `POST /search/ask` — retrieve repository evidence and ask OpenRouter for a grounded answer that
   includes the evidence used.
+- `POST /indexing-requests` — record a natural-language corpus coverage need for later human or
+  platform review; this never triggers ingestion automatically.
 
 GitHub searches use GitHub's relevance/best-match ordering. README retrieval failures are isolated
 per repository: `404` is stored as `missing`, exhausted transient failures are stored as `error`,
@@ -120,6 +122,10 @@ TO "<APP_SERVICE_PRINCIPAL_CLIENT_ID>";
 GRANT SELECT
 ON TABLE public.repository_chunks
 TO "<APP_SERVICE_PRINCIPAL_CLIENT_ID>";
+
+GRANT SELECT, INSERT
+ON TABLE public.indexing_requests
+TO "<APP_SERVICE_PRINCIPAL_CLIENT_ID>";
 ```
 
 These are the current least-privilege application grants: ingestion can read and upsert Section 1
@@ -213,7 +219,9 @@ and conversation memory remain out of scope.
 
 RepoScout includes a framework-free dark interface at the application root. It provides Discover
 and Ask views, expandable README evidence, grounded citation navigation, and live corpus-readiness
-metrics from `GET /corpus/summary`. Run it locally with:
+metrics from `GET /corpus/summary`. Users can also submit natural-language indexing requests when
+the current corpus does not cover what they need. These requests are review-only and do not invoke
+the ingestion pipeline. Run it locally with:
 
 ```bash
 export APP_ENV=local

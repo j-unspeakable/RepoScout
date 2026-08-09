@@ -8,6 +8,9 @@ MIGRATION_PATH = (
 CHUNKS_MIGRATION_PATH = (
     Path(__file__).parents[1] / "alembic" / "versions" / "20260808_0002_repository_chunks.py"
 )
+INDEXING_REQUESTS_MIGRATION_PATH = (
+    Path(__file__).parents[1] / "alembic" / "versions" / "20260809_0003_indexing_requests.py"
+)
 
 
 def _load_migration(
@@ -79,3 +82,37 @@ def test_repository_chunks_downgrade_keeps_shared_extension(monkeypatch) -> None
     migration.downgrade()
 
     assert statements == ["DROP TABLE repository_chunks"]
+
+
+def test_indexing_requests_migration_is_minimal_and_uses_coverage_status(monkeypatch) -> None:
+    migration = _load_migration(INDEXING_REQUESTS_MIGRATION_PATH, "indexing_requests_migration")
+    statements: list[str] = []
+    monkeypatch.setattr(migration.op, "execute", statements.append)
+
+    migration.upgrade()
+    sql = "\n".join(statements)
+
+    assert migration.revision == "20260809_0003"
+    assert migration.down_revision == "20260808_0002"
+    assert "CREATE TABLE indexing_requests" in sql
+    assert "request_id UUID PRIMARY KEY" in sql
+    assert "search_query TEXT NOT NULL" in sql
+    assert "notes TEXT" in sql
+    assert "status TEXT NOT NULL DEFAULT 'NEW'" in sql
+    assert "created_at TIMESTAMPTZ NOT NULL" in sql
+    assert "char_length(search_query) <= 500" in sql
+    assert "char_length(notes) <= 2000" in sql
+    assert "status IN ('NEW', 'REVIEWED', 'COVERED', 'DECLINED')" in sql
+    assert "INDEXED" not in sql
+    assert "repository_url" not in sql
+    assert "CREATE INDEX" not in sql
+
+
+def test_indexing_requests_downgrade_drops_only_feedback_table(monkeypatch) -> None:
+    migration = _load_migration(INDEXING_REQUESTS_MIGRATION_PATH, "indexing_requests_downgrade")
+    statements: list[str] = []
+    monkeypatch.setattr(migration.op, "execute", statements.append)
+
+    migration.downgrade()
+
+    assert statements == ["DROP TABLE indexing_requests"]

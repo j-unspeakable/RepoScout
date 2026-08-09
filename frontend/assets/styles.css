@@ -561,6 +561,14 @@ textarea[aria-invalid="true"] {
   background: var(--raised);
 }
 
+.request-status.is-success {
+  padding: 13px 15px;
+  border: 1px solid rgb(45 212 191 / 32%);
+  border-radius: var(--radius-sm);
+  color: #a7f3d0;
+  background: var(--accent-soft);
+}
+
 .results-stack {
   display: grid;
   margin-top: 20px;
@@ -606,6 +614,88 @@ textarea[aria-invalid="true"] {
 .empty-panel p {
   margin: 0;
   color: var(--muted);
+}
+
+.coverage-action-button,
+.coverage-toggle {
+  min-height: 40px;
+  padding: 8px 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 750;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    color 160ms ease,
+    background 160ms ease;
+}
+
+.coverage-action-button {
+  margin-top: 16px;
+}
+
+.coverage-action-button:hover,
+.coverage-toggle:hover {
+  border-color: rgb(45 212 191 / 52%);
+  color: var(--text);
+  background: rgb(45 212 191 / 17%);
+}
+
+.coverage-feedback {
+  padding: 0 28px 28px;
+}
+
+.coverage-prompt {
+  display: flex;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  background: var(--header);
+}
+
+.coverage-prompt h3,
+.coverage-panel-heading h3 {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
+  letter-spacing: -0.02em;
+}
+
+.coverage-prompt p,
+.coverage-panel-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.coverage-panel {
+  margin-top: 14px;
+  padding: 22px;
+  border: 1px solid rgb(45 212 191 / 25%);
+  border-radius: var(--radius-md);
+  background: var(--raised);
+}
+
+.coverage-panel-heading {
+  display: flex;
+  margin-bottom: 20px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.coverage-panel-heading .section-kicker {
+  margin-bottom: 7px;
+  color: var(--accent);
+}
+
+#indexing-request-form label span {
+  color: var(--muted);
+  font-weight: 500;
 }
 
 .project-card,
@@ -892,6 +982,20 @@ textarea[aria-invalid="true"] {
   .mode-view,
   .mode-intro {
     padding: 20px;
+  }
+
+  .coverage-feedback {
+    padding: 0 20px 20px;
+  }
+
+  .coverage-prompt,
+  .coverage-panel-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .coverage-toggle {
+    width: 100%;
   }
 
   .form-panel,

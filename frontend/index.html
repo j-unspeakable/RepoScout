@@ -65,7 +65,7 @@
           </article>
         </div>
         <p id="corpus-detail" class="corpus-detail" role="status" aria-live="polite">
-          Checking the searchable corpus…
+          Checking searchable repositories…
         </p>
       </section>
 
@@ -224,6 +224,74 @@
 
           <div id="ask-status" class="request-status" role="status" aria-live="polite"></div>
           <div id="ask-results" class="results-stack" aria-label="RepoScout answer"></div>
+        </section>
+
+        <section class="coverage-feedback" aria-labelledby="coverage-feedback-title">
+          <div class="coverage-prompt">
+            <div>
+              <h3 id="coverage-feedback-title">Looking for something else?</h3>
+              <p>Help shape what RepoScout can search next.</p>
+            </div>
+            <button
+              id="coverage-toggle"
+              class="coverage-toggle"
+              type="button"
+              aria-expanded="false"
+              aria-controls="coverage-panel"
+            >
+              Request more coverage
+            </button>
+          </div>
+
+          <div id="coverage-panel" class="coverage-panel" hidden>
+            <div class="coverage-panel-heading">
+              <div>
+                <p class="section-kicker">Help us improve RepoScout</p>
+                <h3>What were you hoping to find?</h3>
+                <p>Tell us what you'd like RepoScout to cover next.</p>
+              </div>
+              <button id="coverage-dismiss" class="text-button" type="button">Dismiss</button>
+            </div>
+
+            <form id="indexing-request-form" novalidate>
+              <div class="field field-wide">
+                <label for="indexing-search-query">Topic or search need</label>
+                <textarea
+                  id="indexing-search-query"
+                  name="search_query"
+                  rows="3"
+                  minlength="1"
+                  maxlength="500"
+                  required
+                  placeholder="Open-source tools for validating streaming data quality"
+                ></textarea>
+              </div>
+
+              <div class="field field-wide">
+                <label for="indexing-notes">Additional context <span>(optional)</span></label>
+                <textarea
+                  id="indexing-notes"
+                  name="notes"
+                  rows="3"
+                  maxlength="2000"
+                  placeholder="Share the use case, constraints, or comparison you had in mind"
+                ></textarea>
+              </div>
+
+              <div class="form-actions">
+                <button class="primary-button" type="submit">
+                  <span class="button-label">Submit request</span>
+                  <span class="spinner" aria-hidden="true"></span>
+                </button>
+              </div>
+            </form>
+            <div
+              id="indexing-request-status"
+              class="request-status"
+              role="status"
+              aria-live="polite"
+            ></div>
+          </div>
         </section>
       </section>
     </main>
