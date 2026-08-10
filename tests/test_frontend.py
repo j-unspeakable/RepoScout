@@ -32,6 +32,7 @@ async def test_frontend_files_and_api_routes_remain_available(
     assert (FRONTEND_ROOT / "index.html").is_file()
     assert (FRONTEND_ROOT / "assets" / "styles.css").is_file()
     assert (FRONTEND_ROOT / "assets" / "app.js").is_file()
+    assert (FRONTEND_ROOT / "assets" / "theme.js").is_file()
     assert (FRONTEND_ROOT / "assets" / "favicon.svg").is_file()
 
     async def run_sync_inline(function: Any, *args: Any, **_kwargs: Any) -> Any:
@@ -45,6 +46,7 @@ async def test_frontend_files_and_api_routes_remain_available(
         stylesheet = await client.get("/assets/styles.css")
         favicon = await client.get("/assets/favicon.svg")
         script_head = await client.head("/assets/app.js")
+        theme_script_head = await client.head("/assets/theme.js")
         missing = await client.get("/not-a-client-route")
         docs = await client.get("/docs")
         schema = await client.get("/openapi.json")
@@ -60,6 +62,8 @@ async def test_frontend_files_and_api_routes_remain_available(
     assert favicon.headers["content-type"].startswith("image/svg+xml")
     assert script_head.status_code == 200
     assert script_head.content == b""
+    assert theme_script_head.status_code == 200
+    assert theme_script_head.content == b""
     assert missing.status_code == 404
     assert docs.status_code == 200
     assert schema.status_code == 200
@@ -73,6 +77,7 @@ async def test_frontend_files_and_api_routes_remain_available(
 def test_frontend_uses_one_proxy_safe_application_base() -> None:
     page = (FRONTEND_ROOT / "index.html").read_text()
     script = (FRONTEND_ROOT / "assets" / "app.js").read_text()
+    theme_script = (FRONTEND_ROOT / "assets" / "theme.js").read_text()
     main_source = (PROJECT_ROOT / "app" / "main.py").read_text()
 
     assert script.count('const APPLICATION_BASE_URL = new URL("./", document.baseURI);') == 1
@@ -91,9 +96,14 @@ def test_frontend_uses_one_proxy_safe_application_base() -> None:
     for value in forbidden:
         assert value not in page
         assert value not in script
+        assert value not in theme_script
     assert 'href="/' not in page
     assert 'src="/' not in page
     assert '<link rel="icon" href="./assets/favicon.svg" type="image/svg+xml">' in page
+    assert '<script src="./assets/theme.js"></script>' in page
+    assert page.index('<script src="./assets/theme.js"></script>') < page.index(
+        '<link rel="stylesheet" href="./assets/styles.css">'
+    )
 
 
 def test_frontend_contract_is_safe_accessible_and_self_contained() -> None:
@@ -168,6 +178,37 @@ def test_frontend_contract_is_safe_accessible_and_self_contained() -> None:
     assert "retrieval_status" not in script
     assert 'element("span", "rank-badge", String(project.rank ?? "—"))' in script
     assert "`#${project.rank" not in script
+
+
+def test_frontend_theme_contract_is_accessible_and_consistent() -> None:
+    page = (FRONTEND_ROOT / "index.html").read_text()
+    styles = (FRONTEND_ROOT / "assets" / "styles.css").read_text()
+    theme_script = (FRONTEND_ROOT / "assets" / "theme.js").read_text()
+
+    assert 'id="theme-toggle"' in page
+    assert 'aria-label="Switch to light theme"' in page
+    assert 'title="Switch to light theme"' in page
+    assert "data-theme-icon" in page
+    assert '[data-theme="dark"]' in styles
+    assert '[data-theme="light"]' in styles
+    assert "color-scheme: dark" in styles
+    assert "color-scheme: light" in styles
+    assert "--page: #07110f" in styles
+    assert "--page: #f4f8f7" in styles
+    assert ".theme-toggle" in styles
+    assert theme_script.count('const THEME_STORAGE_KEY = "reposcout.theme";') == 1
+    assert "value === DARK_THEME || value === LIGHT_THEME" in theme_script
+    assert 'window.matchMedia("(prefers-color-scheme: dark)")' in theme_script
+    assert "readExplicitTheme() ?? preferredSystemTheme()" in theme_script
+    assert "window.localStorage.getItem(THEME_STORAGE_KEY)" in theme_script
+    assert "window.localStorage.setItem(THEME_STORAGE_KEY, theme)" in theme_script
+    assert "if (readExplicitTheme() === null)" in theme_script
+    assert 'toggle.setAttribute("aria-label", label)' in theme_script
+    assert "toggle.title = label" in theme_script
+    assert 'resolvedTheme === DARK_THEME ? "#07110f" : "#f4f8f7"' in theme_script
+    assert 'localStorage.setItem(THEME_STORAGE_KEY, "system")' not in theme_script
+    assert "event.key === THEME_STORAGE_KEY || event.key === null" in theme_script
+    assert theme_script.count("applyTheme(readExplicitTheme() ?? preferredSystemTheme())") == 2
 
 
 def test_agent_chat_and_my_projects_frontend_contract() -> None:
