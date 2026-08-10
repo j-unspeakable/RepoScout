@@ -14,4 +14,4 @@ dist/
 build/
 *.egg-info/
 ingest_ticker*
-artifacts/
+artifacts/**/ACCEPTANCE_REPORT.md

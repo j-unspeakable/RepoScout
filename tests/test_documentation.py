@@ -23,14 +23,14 @@ def test_documentation_matches_committed_databricks_resource_contracts() -> None
 def test_readme_assets_and_operational_contracts_exist() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text()
     expected_images = (
-        "reposcout-overview-dark.png",
-        "reposcout-discover-results.png",
-        "reposcout-ask.png",
-        "reposcout-my-projects.png",
+        "01-dark-landing-1920x1080.png",
+        "04-discover-results.png",
+        "07a-ask-recommendations-start.png",
+        "16-selected-project-to-try-note.png",
     )
     for image in expected_images:
-        assert (PROJECT_ROOT / "docs" / "images" / image).is_file()
-        assert f"docs/images/{image}" in readme
+        assert (PROJECT_ROOT / "artifacts" / "demo-walkthrough-screenshots" / image).is_file()
+        assert f"artifacts/demo-walkthrough-screenshots/{image}" in readme
 
     assert "## Table of Contents" in readme
     assert "`max_repositories` | `50`" in readme
@@ -38,7 +38,21 @@ def test_readme_assets_and_operational_contracts_exist() -> None:
     assert "`Interested`, `To Try`, `In Progress`, or `Completed`" in readme
     assert "uv run alembic upgrade head --sql" in readme
     assert "shared key, `default`" in readme
-    assert "artifacts/" in (PROJECT_ROOT / ".gitignore").read_text().splitlines()
+    assert (
+        "artifacts/**/ACCEPTANCE_REPORT.md"
+        in (PROJECT_ROOT / ".gitignore").read_text().splitlines()
+    )
+
+    assert readme.count("```mermaid") == 1
+    for boundary in (
+        "Databricks App: repo-scout",
+        "Databricks App: mcp-repo-scout",
+        "Databricks serving endpoint",
+        "Databricks Job / Spark notebook",
+        "Databricks Lakebase",
+        "External services",
+    ):
+        assert boundary in readme
 
 
 def test_local_environment_template_requires_process_app_env() -> None:

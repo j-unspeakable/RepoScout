@@ -5,7 +5,7 @@ GitHub projects. It searches indexed README evidence rather than relying on repo
 popularity alone, then lets users refine recommendations conversationally and retain useful
 projects with statuses and notes.
 
-![RepoScout dark application overview](docs/images/reposcout-overview-dark.png)
+![RepoScout dark application overview](artifacts/demo-walkthrough-screenshots/01-dark-landing-1920x1080.png)
 
 ## Table of Contents
 
@@ -71,7 +71,7 @@ and request between one and ten results. Each repository result includes useful 
 expandable indexed README evidence. Similarity scores and vector-search internals remain hidden
 from the normal interface.
 
-![RepoScout Discover results](docs/images/reposcout-discover-results.png)
+![RepoScout Discover results](artifacts/demo-walkthrough-screenshots/04-discover-results.png)
 
 ### Ask RepoScout
 
@@ -80,7 +80,7 @@ detail, saving a repository, changing its progress status, or adding a note. Onl
 assistant messages reach browser session storage; MCP calls, tool arguments, tool outputs, and
 reasoning stay on the backend.
 
-![RepoScout conversational recommendations](docs/images/reposcout-ask.png)
+![RepoScout conversational recommendations](artifacts/demo-walkthrough-screenshots/07a-ask-recommendations-start.png)
 
 ### My Projects
 
@@ -88,7 +88,7 @@ Saved repositories can be classified as `Interested`, `To Try`, `In Progress`, o
 My Projects is read-only in the browser; state-changing actions are requested conversationally and
 performed through the MCP tools. Each card shows at most the ten most recent notes.
 
-![RepoScout saved project with status and note](docs/images/reposcout-my-projects.png)
+![RepoScout saved project with status and note](artifacts/demo-walkthrough-screenshots/16-selected-project-to-try-note.png)
 
 ### Coverage feedback and readiness
 
@@ -103,39 +103,74 @@ rendering, and relative URLs that work behind the Databricks Apps proxy.
 
 ## Architecture
 
-### System architecture
+### Final deployed architecture
 
 ```mermaid
 flowchart LR
-    Browser[Browser UI] --> Main[repo-scout FastAPI App]
-    Main --> GitHub[GitHub REST API]
-    Main --> Lakebase[(Databricks Lakebase)]
-    Main --> OpenRouter[OpenRouter API]
+    Browser[Browser UI]
 
-    Browser -->|Ask message| Main
-    Main -->|Responses API| Supervisor[Databricks Supervisor Endpoint]
-    Supervisor -->|MCP| MCP[mcp-repo-scout App]
-    MCP -->|Authenticated HTTP /api/tools| Main
+    subgraph External[External services]
+        GitHub[GitHub REST API]
+        OpenRouter[OpenRouter API]
+    end
 
-    Notebook[Databricks Spark Notebook / Job] -->|JDBC read| Lakebase
-    Notebook -->|Transactional chunk writes| Lakebase
+    subgraph MainApp[Databricks App: repo-scout]
+        Frontend[RepoScout frontend]
+        FastAPI[FastAPI application]
+        Ingestion[GitHub ingestion]
+        Retrieval[Semantic retrieval]
+        ToolAPI[Machine and tool APIs]
+        RAG[Retained grounded RAG<br/>POST /search/ask]
+
+        Frontend --> FastAPI
+        FastAPI --> Ingestion
+        FastAPI --> Retrieval
+        FastAPI --> ToolAPI
+        FastAPI --> RAG
+    end
+
+    subgraph DataJob[Databricks Job / Spark notebook]
+        Spark[Spark eligibility and cleaning]
+        Chunking[Deterministic chunking]
+        Embeddings[all-MiniLM-L6-v2 embeddings]
+
+        Spark --> Chunking --> Embeddings
+    end
+
+    subgraph Database[Databricks Lakebase]
+        Sources[(Repositories and READMEs)]
+        VectorIndex[(README chunks<br/>VECTOR 384 + pgvector HNSW)]
+        SavedState[(Saved projects, statuses, and notes)]
+    end
+
+    subgraph SupervisorRuntime[Databricks serving endpoint]
+        Supervisor[Supervisor Agent]
+    end
+
+    subgraph MCPApp[Databricks App: mcp-repo-scout]
+        MCP[Five RepoScout MCP tools<br/>thin HTTP adapter]
+    end
+
+    GitHub -->|Best-match search and README data| Ingestion
+    Ingestion -->|Transactional upserts| Sources
+    Sources -->|Scheduled JDBC read| Spark
+    Embeddings -->|Transactional vector writes| VectorIndex
+    Retrieval <-->|Cosine HNSW search| VectorIndex
+
+    Browser --> Frontend
+    FastAPI -->|Ask messages: Responses API| Supervisor
+    Supervisor -->|MCP tool calls| MCP
+    MCP -->|Authenticated HTTP /api/tools/*| ToolAPI
+    ToolAPI -->|Search and evidence| Retrieval
+    ToolAPI <-->|Save, status, and note state| SavedState
+
+    RAG <-->|Grounded completion| OpenRouter
+    RAG <-->|Retrieved README evidence| Retrieval
 ```
 
-### Ingestion and indexing flow
-
-```mermaid
-flowchart TD
-    Search[GitHub best-match search] --> Metadata[Repository metadata]
-    Metadata --> Readmes[Independent README retrieval]
-    Readmes --> Source[(repositories + repository_readmes)]
-    Source --> Spark[Spark eligibility, cleaning, and chunking]
-    Spark --> MiniLM[all-MiniLM-L6-v2 embeddings]
-    MiniLM --> Chunks[(repository_chunks VECTOR(384))]
-    Chunks --> HNSW[Cosine HNSW candidate search]
-    HNSW --> Rank[Threshold, group, and rank repositories]
-    Rank --> Discover[Discover/API results]
-    Rank --> Evidence[Grounded evidence for tools and RAG]
-```
+The upper data path builds the searchable README index; the lower runtime path handles browser
+discovery, Supervisor-orchestrated MCP actions, saved-project state, and the retained direct
+OpenRouter RAG API. The MCP App remains a thin adapter and has no direct Lakebase access.
 
 ### Runtime boundaries
 
@@ -169,7 +204,8 @@ reposcout/
 │   └── process_repository_embeddings.ipynb
 ├── mcp-server/          # Independently deployable MCP App
 ├── tests/               # Main application and contract tests
-├── docs/images/         # Curated product screenshots
+├── artifacts/
+│   └── demo-walkthrough-screenshots/  # Complete product demo capture set
 ├── app.yaml             # Main Databricks App configuration
 ├── pyproject.toml
 └── README.md
