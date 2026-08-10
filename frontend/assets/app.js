@@ -527,8 +527,21 @@ function appendAnswerInline(parent, text, citationTargets) {
   }
 }
 
+function normalizeAnswerMarkdown(answer) {
+  return String(answer ?? "")
+    .replace(/^(\s*\d+[.)])(?=\[)/gm, "$1 ")
+    .replace(
+      /\]\s+\((https:\/\/github\.com\/[^)\s]+)\)/g,
+      "]($1)",
+    )
+    .replace(
+      /(\]\(https:\/\/github\.com\/[^)\s]+\))\s*\r?\n\s*(\(repo_id\s*:\s*\d+\))/gi,
+      "$1 $2",
+    );
+}
+
 function renderAnswerBody(container, answer, citationTargets) {
-  const lines = String(answer ?? "").split(/\r?\n/);
+  const lines = normalizeAnswerMarkdown(answer).split(/\r?\n/);
   let orderedList = null;
   let currentOrderedItem = null;
   let nestedBulletList = null;
@@ -611,13 +624,44 @@ const chatState = {
 };
 
 function validStoredChatMessage(value) {
+  const validEvidence =
+    value?.evidence === undefined ||
+    (Array.isArray(value.evidence) &&
+      value.evidence.length <= 10 &&
+      value.evidence.every(validStoredAssistantEvidenceProject));
   return (
     value !== null &&
     typeof value === "object" &&
     ["user", "assistant"].includes(value.role) &&
     typeof value.content === "string" &&
     value.content.trim().length > 0 &&
-    value.content.length <= (value.role === "user" ? 2000 : 20000)
+    value.content.length <= (value.role === "user" ? 2000 : 20000) &&
+    (value.role === "assistant" ? validEvidence : value.evidence === undefined)
+  );
+}
+
+function validStoredAssistantEvidenceProject(project) {
+  return (
+    project !== null &&
+    typeof project === "object" &&
+    Number.isInteger(project.repo_id) &&
+    project.repo_id > 0 &&
+    typeof project.full_name === "string" &&
+    project.full_name.length > 0 &&
+    project.full_name.length <= 200 &&
+    safeGitHubUrl(project.html_url) !== null &&
+    Array.isArray(project.evidence) &&
+    project.evidence.length <= 5 &&
+    project.evidence.every(
+      (chunk) =>
+        chunk !== null &&
+        typeof chunk === "object" &&
+        Number.isInteger(chunk.chunk_index) &&
+        chunk.chunk_index >= 0 &&
+        typeof chunk.chunk_text === "string" &&
+        chunk.chunk_text.trim().length > 0 &&
+        chunk.chunk_text.length <= 4000,
+    )
   );
 }
 
@@ -658,7 +702,65 @@ function persistChatSession() {
   }
 }
 
-function createChatMessage(message, animate = false) {
+function createChatEvidenceGroup(project, citationTargets, messageIndex) {
+  const details = element("details", "evidence-group chat-evidence-group");
+  details.append(element("summary", "", "Why this matched"));
+  const list = element("div", "evidence-list");
+  for (const chunk of project.evidence) {
+    const evidence = element("div", "evidence-chunk", chunk.chunk_text);
+    evidence.id = `chat-evidence-${messageIndex}-${project.repo_id}-${chunk.chunk_index}`;
+    evidence.setAttribute("tabindex", "-1");
+    list.append(evidence);
+    citationTargets.set(`[${project.full_name}#chunk-${chunk.chunk_index}]`, {
+      details,
+      evidence,
+    });
+  }
+  details.append(list);
+  return details;
+}
+
+function chatEvidenceHost(body, project) {
+  const fullName = project.full_name.toLocaleLowerCase();
+  const expectedUrl = safeGitHubUrl(project.html_url)?.href;
+  const repositoryIdPattern = new RegExp(`\\brepo[_\\s-]*id\\s*[:=]\\s*${project.repo_id}\\b`, "i");
+  for (const candidate of body.querySelectorAll("ol > li, p, h4")) {
+    const text = candidate.textContent.toLocaleLowerCase();
+    const hasRepositoryLink = Array.from(candidate.querySelectorAll("a.answer-link")).some(
+      (link) => safeGitHubUrl(link.href)?.href === expectedUrl,
+    );
+    if (hasRepositoryLink || text.includes(fullName) || repositoryIdPattern.test(text)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function placeChatEvidence(body, evidenceGroups) {
+  for (const { project, details } of evidenceGroups) {
+    const host = chatEvidenceHost(body, project);
+    if (!host) {
+      continue;
+    }
+    if (host.matches("li")) {
+      host.append(details);
+    } else {
+      host.after(details);
+    }
+  }
+}
+
+function createChatEvidence(evidenceProjects, citationTargets, messageIndex) {
+  if (!Array.isArray(evidenceProjects) || evidenceProjects.length === 0) {
+    return [];
+  }
+  return evidenceProjects.map((project) => ({
+    project,
+    details: createChatEvidenceGroup(project, citationTargets, messageIndex),
+  }));
+}
+
+function createChatMessage(message, animate = false, messageIndex = 0) {
   const item = element(
     "article",
     `chat-message is-${message.role}${animate ? " is-entering" : ""}`,
@@ -666,7 +768,10 @@ function createChatMessage(message, animate = false) {
   item.append(element("span", "chat-speaker", message.role === "user" ? "You" : "RepoScout"));
   const body = element("div", "chat-message-body");
   if (message.role === "assistant") {
-    renderAnswerBody(body, message.content, new Map());
+    const citationTargets = new Map();
+    const evidenceGroups = createChatEvidence(message.evidence, citationTargets, messageIndex);
+    renderAnswerBody(body, message.content, citationTargets);
+    placeChatEvidence(body, evidenceGroups);
   } else {
     body.append(element("p", "", message.content));
   }
@@ -725,7 +830,7 @@ function renderChatTranscript(pendingUserMessage = null, { animateTail = 0 } = {
   } else {
     const animateFrom = Math.max(visibleMessages.length - animateTail, 0);
     for (const [index, message] of visibleMessages.entries()) {
-      fragment.append(createChatMessage(message, index >= animateFrom));
+      fragment.append(createChatMessage(message, index >= animateFrom, index));
     }
   }
   if (pendingUserMessage) {
@@ -889,7 +994,11 @@ function setupAssistantChat() {
       chatState.conversationId = response.conversation_id;
       chatState.messages.push(
         { role: "user", content: message },
-        { role: "assistant", content: response.message.content },
+        {
+          role: "assistant",
+          content: response.message.content,
+          evidence: Array.isArray(response.message.evidence) ? response.message.evidence : [],
+        },
       );
       chatState.messages = chatState.messages.slice(-MAX_VISIBLE_CHAT_MESSAGES);
       persistChatSession();

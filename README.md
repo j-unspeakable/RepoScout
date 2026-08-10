@@ -77,15 +77,15 @@ from the normal interface.
 
 Ask RepoScout supports natural follow-ups such as comparing returned projects, requesting more
 detail, saving a repository, changing its progress status, or adding a note. Only visible user and
-assistant messages reach browser session storage; MCP calls, tool arguments, tool outputs, and
-reasoning stay on the backend.
+assistant messages and their displayed README evidence reach browser session storage; MCP calls,
+tool arguments, raw tool outputs, similarity scores, and reasoning stay on the backend.
 
 Ask recommendations are still evidence-backed: the Supervisor searches through RepoScout's MCP
 tools and receives bounded, indexed README excerpts for the repositories it inspects. That evidence
-remains in the private conversation/tool context and is not rendered as raw chunk identifiers or
-tool payloads in the chat interface. **Discover is the product's explicit evidence-inspection
-surface**, where users can expand **Why this matched** to read the underlying indexed README
-passages directly. This is a presentation and security boundary, not an absence of grounding.
+is filtered through a typed public response and appears beneath the relevant assistant message as
+an expandable **Why this matched** section, matching Discover's evidence experience. Raw MCP
+payloads, tool arguments, similarity scores, approvals, and reasoning remain private. Stable chunk
+citations in an answer become controls that open the corresponding displayed README passage.
 
 ![RepoScout conversational recommendations](artifacts/demo-walkthrough-screenshots/07a-ask-recommendations-start.png)
 
@@ -679,16 +679,18 @@ tool success. State-changing tools should run only after an explicit user reques
 
 The read tools return repository metadata and bounded README evidence, including deterministic
 chunk identity, to the Supervisor. These tool results are retained in the backend conversation
-context so follow-up answers can remain grounded. The normal Ask UI deliberately exposes only the
-final conversational answer—not MCP calls, tool payloads, or raw chunk citations. Users who want to
-inspect the source evidence can use Discover's expandable **Why this matched** passages. The
-separate OpenRouter-backed `POST /search/ask` contract continues to return its exact evidence and
-stable citations for API consumers.
+context so follow-up answers can remain grounded. For the current turn, RepoScout extracts only a
+bounded, validated projection of repository name, GitHub URL, chunk order, and README text. The Ask
+UI renders that projection in expandable **Why this matched** sections while keeping MCP calls,
+arguments, raw outputs, similarity scores, approvals, and reasoning private. The separate
+OpenRouter-backed `POST /search/ask` contract continues to return its exact evidence and stable
+citations for API consumers.
 
 RepoScout sends the complete retained response-item history plus each new user message to the
 Databricks Responses endpoint. The backend automatically handles bounded approval rounds only for
-the five allowlisted RepoScout tools. The browser receives only the final assistant text and an
-opaque conversation ID.
+the five allowlisted RepoScout tools. The browser receives the final assistant text, sanitized
+display evidence for the current turn, and an opaque conversation ID—never the response-item
+history itself.
 
 Conversations retain 12 completed turns, expire after one hour, cap the process at 100
 least-recently-used sessions, and cap serialized history size. Concurrent turns for one

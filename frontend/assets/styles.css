@@ -660,6 +660,29 @@ main {
   margin-top: 8px;
 }
 
+.chat-evidence-group {
+  margin-top: 12px;
+}
+
+.chat-message-body .chat-evidence-group {
+  margin-top: 10px;
+  border-top: 0;
+}
+
+.chat-message-body .chat-evidence-group summary {
+  padding: 7px 0 0;
+  color: var(--accent);
+  font-size: 0.78rem;
+}
+
+.chat-evidence-group summary {
+  overflow-wrap: anywhere;
+}
+
+.chat-evidence-group .evidence-chunk {
+  background: var(--surface);
+}
+
 .typing-indicator {
   display: flex;
   width: max-content;

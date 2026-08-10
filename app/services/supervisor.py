@@ -1,11 +1,13 @@
 import asyncio
 import json
+import re
 from collections import OrderedDict
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
 from time import monotonic
 from typing import Any, Protocol, cast
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 import httpx
@@ -72,9 +74,24 @@ class WorkspaceClientProtocol(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class AssistantEvidenceChunk:
+    chunk_index: int
+    chunk_text: str
+
+
+@dataclass(frozen=True, slots=True)
+class AssistantEvidenceProject:
+    repo_id: int
+    full_name: str
+    html_url: str
+    evidence: tuple[AssistantEvidenceChunk, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class SupervisorResult:
     answer: str
     output_items: list[dict[str, Any]]
+    evidence: tuple[AssistantEvidenceProject, ...] = ()
 
 
 class SupervisorClientProtocol(Protocol):
@@ -90,6 +107,9 @@ class SupervisorClient:
 
     _MAX_RESPONSE_BYTES = 512_000
     _MAX_MCP_APPROVAL_ROUNDS = 8
+    _MAX_EVIDENCE_PROJECTS = 10
+    _MAX_EVIDENCE_CHUNKS = 5
+    _MAX_EVIDENCE_TEXT_LENGTH = 4_000
     _ALLOWED_MCP_TOOLS = frozenset(
         {
             "search_projects",
@@ -161,7 +181,12 @@ class SupervisorClient:
                     UNCERTAIN_COMPLETION_MESSAGE,
                     uncertain=True,
                 )
-            return SupervisorResult(answer=answer, output_items=replay_items)
+            evidence = self._extract_evidence(replay_items)
+            return SupervisorResult(
+                answer=answer,
+                output_items=replay_items,
+                evidence=self._evidence_referenced_by_answer(answer, evidence),
+            )
 
     async def _send_once(
         self,
@@ -307,6 +332,168 @@ class SupervisorClient:
                     texts.append(text.strip())
         return "\n".join(texts).strip()
 
+    @classmethod
+    def _extract_evidence(
+        cls,
+        output_items: list[dict[str, Any]],
+    ) -> tuple[AssistantEvidenceProject, ...]:
+        projects: OrderedDict[int, dict[str, Any]] = OrderedDict()
+        for item in output_items:
+            if item.get("type") not in {"function_call_output", "mcp_call"}:
+                continue
+            for payload in cls._decoded_tool_payloads(item.get("output")):
+                candidates = payload.get("projects")
+                if isinstance(candidates, list):
+                    project_values = candidates
+                elif "repo_id" in payload and "evidence" in payload:
+                    project_values = [payload]
+                else:
+                    continue
+                for value in project_values:
+                    cls._collect_evidence_project(projects, value)
+                    if len(projects) >= cls._MAX_EVIDENCE_PROJECTS:
+                        break
+            if len(projects) >= cls._MAX_EVIDENCE_PROJECTS:
+                break
+
+        return tuple(
+            AssistantEvidenceProject(
+                repo_id=project["repo_id"],
+                full_name=project["full_name"],
+                html_url=project["html_url"],
+                evidence=tuple(project["evidence"]),
+            )
+            for project in projects.values()
+            if project["evidence"]
+        )
+
+    @staticmethod
+    def _evidence_referenced_by_answer(
+        answer: str,
+        evidence: tuple[AssistantEvidenceProject, ...],
+    ) -> tuple[AssistantEvidenceProject, ...]:
+        normalized_answer = answer.casefold()
+        referenced: list[AssistantEvidenceProject] = []
+        for project in evidence:
+            full_name = project.full_name.casefold()
+            repository_id_pattern = rf"\brepo[_\s-]*id\s*[:=]\s*{project.repo_id}\b"
+            if (
+                full_name in normalized_answer
+                or project.html_url.casefold() in normalized_answer
+                or re.search(repository_id_pattern, normalized_answer) is not None
+            ):
+                referenced.append(project)
+        return tuple(referenced)
+
+    @classmethod
+    def _decoded_tool_payloads(cls, value: Any, depth: int = 0) -> list[dict[str, Any]]:
+        if depth > 2:
+            return []
+        if isinstance(value, str):
+            if not value.strip() or len(value) > cls._MAX_RESPONSE_BYTES:
+                return []
+            try:
+                decoded = json.loads(value)
+            except (TypeError, ValueError):
+                return []
+            return cls._decoded_tool_payloads(decoded, depth + 1)
+        if isinstance(value, dict):
+            payloads = [value]
+            for key in ("structuredContent", "structured_content"):
+                payloads.extend(cls._decoded_tool_payloads(value.get(key), depth + 1))
+            content = value.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict):
+                        payloads.extend(cls._decoded_tool_payloads(block.get("text"), depth + 1))
+            return payloads
+        if isinstance(value, list):
+            payloads: list[dict[str, Any]] = []
+            for item in value:
+                payloads.extend(cls._decoded_tool_payloads(item, depth + 1))
+            return payloads
+        return []
+
+    @classmethod
+    def _collect_evidence_project(
+        cls,
+        projects: OrderedDict[int, dict[str, Any]],
+        value: Any,
+    ) -> None:
+        if not isinstance(value, dict):
+            return
+        repo_id = value.get("repo_id")
+        full_name = value.get("full_name")
+        html_url = value.get("html_url")
+        evidence = value.get("evidence")
+        if (
+            not isinstance(repo_id, int)
+            or isinstance(repo_id, bool)
+            or repo_id <= 0
+            or not isinstance(full_name, str)
+            or not full_name.strip()
+            or len(full_name) > 200
+            or not isinstance(html_url, str)
+            or not cls._valid_github_repository_url(html_url, full_name)
+            or not isinstance(evidence, list)
+        ):
+            return
+
+        project = projects.setdefault(
+            repo_id,
+            {
+                "repo_id": repo_id,
+                "full_name": full_name.strip(),
+                "html_url": html_url,
+                "evidence": [],
+                "chunk_indexes": set(),
+            },
+        )
+        for chunk in evidence:
+            if len(project["evidence"]) >= cls._MAX_EVIDENCE_CHUNKS:
+                break
+            if not isinstance(chunk, dict):
+                continue
+            chunk_index = chunk.get("chunk_index")
+            chunk_text = chunk.get("chunk_text")
+            if (
+                not isinstance(chunk_index, int)
+                or isinstance(chunk_index, bool)
+                or chunk_index < 0
+                or chunk_index in project["chunk_indexes"]
+                or not isinstance(chunk_text, str)
+                or not chunk_text.strip()
+                or len(chunk_text) > cls._MAX_EVIDENCE_TEXT_LENGTH
+            ):
+                continue
+            project["chunk_indexes"].add(chunk_index)
+            project["evidence"].append(
+                AssistantEvidenceChunk(
+                    chunk_index=chunk_index,
+                    chunk_text=chunk_text.strip(),
+                )
+            )
+
+    @staticmethod
+    def _valid_github_repository_url(html_url: str, full_name: str) -> bool:
+        try:
+            parsed = urlsplit(html_url)
+            segments = [segment for segment in parsed.path.split("/") if segment]
+            return (
+                parsed.scheme == "https"
+                and parsed.hostname is not None
+                and parsed.hostname.casefold() == "github.com"
+                and parsed.username is None
+                and parsed.password is None
+                and parsed.port is None
+                and not parsed.query
+                and not parsed.fragment
+                and len(segments) == 2
+                and "/".join(segments).casefold() == full_name.strip().casefold()
+            )
+        except ValueError:
+            return False
+
     @staticmethod
     def _retry_after(response: httpx.Response) -> int | None:
         value = response.headers.get("Retry-After")
@@ -342,6 +529,7 @@ class ConversationState:
 class AssistantReply:
     conversation_id: UUID
     content: str
+    evidence: tuple[AssistantEvidenceProject, ...] = ()
 
 
 class AssistantService:
@@ -405,7 +593,11 @@ class AssistantService:
                 state.last_accessed = self._clock()
                 state.busy = False
                 self._conversations.move_to_end(identifier)
-        return AssistantReply(conversation_id=identifier, content=result.answer)
+        return AssistantReply(
+            conversation_id=identifier,
+            content=result.answer,
+            evidence=result.evidence,
+        )
 
     async def _begin_turn(
         self, conversation_id: UUID | None

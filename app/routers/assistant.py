@@ -46,7 +46,10 @@ async def send_assistant_message(
         _raise_supervisor_error(exc, status.HTTP_502_BAD_GATEWAY)
     return AssistantMessageResponse(
         conversation_id=reply.conversation_id,
-        message=AssistantMessageResponseMessage(content=reply.content),
+        message=AssistantMessageResponseMessage(
+            content=reply.content,
+            evidence=list(reply.evidence),
+        ),
     )
 
 

@@ -240,6 +240,7 @@ def test_agent_chat_and_my_projects_frontend_contract() -> None:
     assert "CHAT_SESSION_KEY" in script
     assert "conversation_id: chatState.conversationId" in script
     assert "response.message.content" in script
+    assert "response.message.evidence" in script
     assert "response.output" not in script
     assert "tool_calls" not in script
     assert "reasoning" not in script
@@ -265,6 +266,20 @@ def test_agent_chat_and_my_projects_frontend_contract() -> None:
     assert "evidence-based details or comparisons" in script
     assert "Interested, To Try, In Progress, or Completed" in script
     assert "createChatOnboardingMessage" in script
+    assert "createChatEvidence" in script
+    assert "normalizeAnswerMarkdown" in script
+    assert "createChatEvidenceGroup" in script
+    assert "chatEvidenceHost" in script
+    assert "placeChatEvidence" in script
+    assert 'element("summary", "", "Why this matched")' in script
+    assert "Supporting README evidence" not in script
+    assert "validStoredAssistantEvidenceProject" in script
+    assert "chat-evidence-group" in styles
+    assert "chat-evidence-fallback" not in styles
+    chat_evidence_source = script[
+        script.index("function createChatEvidence") : script.index("function createChatMessage")
+    ]
+    assert "similarity" not in chat_evidence_source
     assert "visibleMessages.length === 0" in script
     assert "fragment.append(createChatOnboardingMessage())" in script
     assert "message: CHAT_ONBOARDING_MESSAGE" not in script

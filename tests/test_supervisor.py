@@ -13,6 +13,8 @@ from app.dependencies import get_assistant_service
 from app.main import create_app
 from app.services.supervisor import (
     UNCERTAIN_COMPLETION_MESSAGE,
+    AssistantEvidenceChunk,
+    AssistantEvidenceProject,
     AssistantReply,
     AssistantService,
     ConversationConflictError,
@@ -176,6 +178,107 @@ async def test_supervisor_client_uses_asyncify_and_parses_final_text(
         "stream": False,
     }
     await http_client.aclose()
+
+
+def test_supervisor_extracts_only_bounded_valid_repository_evidence() -> None:
+    valid_project = {
+        "repo_id": 42,
+        "full_name": "owner/project",
+        "html_url": "https://github.com/owner/project",
+        "similarity": 0.92,
+        "secret": "must-not-leak",
+        "evidence": [
+            {
+                "chunk_id": f"hidden-{index}",
+                "chunk_index": index,
+                "chunk_text": f" README passage {index}. ",
+                "similarity": 0.9,
+            }
+            for index in range(7)
+        ],
+    }
+    output = [
+        {
+            "type": "mcp_call",
+            "name": "search_projects",
+            "arguments": '{"query":"private argument"}',
+            "output": __import__("json").dumps(
+                {
+                    "query": "data engineering",
+                    "projects": [
+                        valid_project,
+                        {
+                            **valid_project,
+                            "repo_id": 43,
+                            "html_url": "https://example.com/owner/project",
+                        },
+                    ],
+                }
+            ),
+        },
+        {
+            "type": "function_call_output",
+            "output": __import__("json").dumps(
+                {
+                    **valid_project,
+                    "evidence": [
+                        {"chunk_index": 0, "chunk_text": "duplicate"},
+                        {"chunk_index": 8, "chunk_text": "later passage"},
+                    ],
+                }
+            ),
+        },
+    ]
+
+    evidence = SupervisorClient._extract_evidence(output)
+
+    assert evidence == (
+        AssistantEvidenceProject(
+            repo_id=42,
+            full_name="owner/project",
+            html_url="https://github.com/owner/project",
+            evidence=tuple(
+                AssistantEvidenceChunk(
+                    chunk_index=index,
+                    chunk_text=f"README passage {index}.",
+                )
+                for index in range(5)
+            ),
+        ),
+    )
+    serialized = repr(evidence)
+    assert "secret" not in serialized
+    assert "similarity" not in serialized
+    assert "private argument" not in serialized
+    assert "chunk_id" not in serialized
+
+
+def test_supervisor_keeps_evidence_only_for_projects_named_in_answer() -> None:
+    evidence = tuple(
+        AssistantEvidenceProject(
+            repo_id=index,
+            full_name=full_name,
+            html_url=f"https://github.com/{full_name}",
+            evidence=(AssistantEvidenceChunk(chunk_index=0, chunk_text="Evidence"),),
+        )
+        for index, full_name in (
+            (1, "owner/first-project"),
+            (2, "owner/second-project"),
+            (3, "owner/unmentioned-project"),
+            (4, "owner/fastapi"),
+        )
+    )
+
+    filtered = SupervisorClient._evidence_referenced_by_answer(
+        (
+            "Compare **owner/first-project** with "
+            "[second-project](https://github.com/owner/second-project). "
+            "Both are useful for FastAPI learners."
+        ),
+        evidence,
+    )
+
+    assert [project.repo_id for project in filtered] == [1, 2]
 
 
 @pytest.mark.asyncio
@@ -595,11 +698,16 @@ async def test_cancelled_turn_releases_conversation_without_committing() -> None
 class FakeAssistantService:
     def __init__(self) -> None:
         self.error: Exception | None = None
+        self.evidence: tuple[AssistantEvidenceProject, ...] = ()
 
     async def send(self, conversation_id: UUID | None, message: str) -> AssistantReply:
         if self.error:
             raise self.error
-        return AssistantReply(conversation_id=conversation_id or uuid4(), content="Safe answer")
+        return AssistantReply(
+            conversation_id=conversation_id or uuid4(),
+            content="Safe answer",
+            evidence=self.evidence,
+        )
 
 
 @asynccontextmanager
@@ -622,14 +730,40 @@ async def _assistant_api_client(
 
 @pytest.mark.asyncio
 async def test_assistant_endpoint_returns_only_visible_message_contract() -> None:
-    async with _assistant_api_client(FakeAssistantService()) as client:
+    service = FakeAssistantService()
+    service.evidence = (
+        AssistantEvidenceProject(
+            repo_id=42,
+            full_name="owner/project",
+            html_url="https://github.com/owner/project",
+            evidence=(
+                AssistantEvidenceChunk(chunk_index=3, chunk_text="Visible README evidence."),
+            ),
+        ),
+    )
+    async with _assistant_api_client(service) as client:
         response = await client.post("/assistant/messages", json={"message": "  Find projects  "})
 
     assert response.status_code == 200
     assert set(response.json()) == {"conversation_id", "message"}
-    assert response.json()["message"] == {"role": "assistant", "content": "Safe answer"}
+    assert response.json()["message"] == {
+        "role": "assistant",
+        "content": "Safe answer",
+        "evidence": [
+            {
+                "repo_id": 42,
+                "full_name": "owner/project",
+                "html_url": "https://github.com/owner/project",
+                "evidence": [
+                    {"chunk_index": 3, "chunk_text": "Visible README evidence."},
+                ],
+            }
+        ],
+    }
     assert "output" not in response.text
     assert "mcp" not in response.text.lower()
+    assert "similarity" not in response.text
+    assert "chunk_id" not in response.text
 
 
 @pytest.mark.asyncio
