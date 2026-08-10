@@ -212,6 +212,8 @@ reposcout/
 │   ├── dependencies.py
 │   └── main.py
 ├── alembic/             # Handwritten schema migrations
+├── databricks/
+│   └── jobs/            # Portable Databricks Job settings
 ├── frontend/            # Committed HTML, CSS, SVG, and ES modules
 ├── notebook/
 │   └── process_repository_embeddings.ipynb
@@ -431,19 +433,58 @@ An unchanged rerun should report zero selected repositories and leave persisted 
 
 ### Databricks Job scheduling
 
-The Databricks workspace has a UI-managed Job that runs the embedding notebook **once daily**. Its
-Job definition is not committed to this repository. Use the following settings to verify or
-recreate it in another workspace:
+The deployed workspace has a Job named **RepoScout Embedding Pipeline** that runs the embedding
+notebook **once daily**. It was initially created in the Databricks UI; the equivalent sanitized
+Jobs API settings are now source-controlled in
+[`databricks/jobs/reposcout-embedding-job.json`](databricks/jobs/reposcout-embedding-job.json).
+The definition points to the deployed workspace notebook at
+`/Workspace/Users/famous.jt33@gmail.com/RepoScout/notebook/process_repository_embeddings` and
+deliberately excludes notification addresses.
+
+![RepoScout once-daily embedding Job](artifacts/databricks/01-embedding-job-daily-schedule-and-runs.png)
+
+The committed task uses serverless compute, permits only one concurrent run, enables queueing, and
+runs `embed_github_repos` on an unpaused one-day periodic trigger. Import or sync the notebook to
+the committed path before creating the Job.
+
+Create the Job in a new workspace:
+
+```bash
+export DATABRICKS_CONFIG_PROFILE=reposcout
+
+databricks jobs create \
+  --profile "$DATABRICKS_CONFIG_PROFILE" \
+  --json @databricks/jobs/reposcout-embedding-job.json
+```
+
+To make the committed settings authoritative for an existing Job, render a reset request around
+the same settings and apply it using that Job's numeric ID:
+
+```bash
+export REPOSCOUT_JOB_ID="<job-id>"
+
+jq --argjson job_id "$REPOSCOUT_JOB_ID" \
+  '{job_id: $job_id, new_settings: .}' \
+  databricks/jobs/reposcout-embedding-job.json \
+  > /tmp/reposcout-embedding-job-reset.json
+
+databricks jobs reset \
+  --profile "$DATABRICKS_CONFIG_PROFILE" \
+  --json @/tmp/reposcout-embedding-job-reset.json
+```
+
+The deployment sequence for this pipeline is:
 
 1. Import or sync `notebook/process_repository_embeddings.ipynb` into the workspace.
-2. Select compute compatible with Spark, pandas UDFs, JDBC, and the pinned notebook dependencies.
+2. Confirm that serverless Spark supports pandas UDFs, JDBC, and the pinned notebook dependencies.
 3. Run migrations before enabling a version that expects a new schema.
 4. Configure the Lakebase endpoint and PostgreSQL widgets or runtime environment values.
 5. Start with `max_repositories=50`; reduce it when Free Edition or constrained compute needs
    shorter runs.
 6. Grant the Job identity source-table reads and chunk-table replacement permissions.
-7. Configure a once-daily schedule and monitor the final JSON run summary.
-8. Confirm an unchanged follow-up run selects zero repositories.
+7. Create or reset the Job with the CLI commands above.
+8. Confirm the one-day trigger is unpaused and monitor the final JSON run summary.
+9. Confirm an unchanged follow-up run selects zero repositories.
 
 ### Semantic retrieval and grounded RAG
 
@@ -495,8 +536,10 @@ Use this dependency order:
 11. Deploy or redeploy `repo-scout` from the repository root. At this point every `valueFrom` entry
     in the committed `app.yaml` has an attached resource.
 12. Validate the MCP tools and Supervisor-backed Ask flow before running state-changing demos.
-13. Run ingestion, execute the embedding notebook, and confirm the UI-managed once-daily Job is
-    enabled.
+13. Run ingestion and import/sync the embedding notebook into the workspace.
+14. Deploy `databricks/jobs/reposcout-embedding-job.json`, confirm its once-daily trigger, and
+    execute an initial run.
+15. Confirm an unchanged follow-up run selects zero repositories, then validate Discover readiness.
 
 This sequence distinguishes identity creation from resource attachment, permission grants, and
 application deployment without requiring the main App to be fully operational before the MCP and
@@ -702,6 +745,7 @@ uv run ty check
 node --check frontend/assets/app.js
 node --check frontend/assets/theme.js
 jq empty notebook/process_repository_embeddings.ipynb
+jq empty databricks/jobs/reposcout-embedding-job.json
 ```
 
 Validate the handwritten migration chain and offline SQL generation:
@@ -749,8 +793,8 @@ Current intentional limitations:
 - Supervisor responses are non-streaming; interrupted writes have uncertain completion.
 - GitHub ingestion is synchronous and capped at 100 repositories per request.
 - Newly ingested READMEs become searchable only after the notebook runs.
-- A UI-managed Databricks Job runs the notebook once daily, but its definition is not
-  source-controlled and must be recreated manually in another workspace.
+- A source-controlled Jobs API definition reproduces the once-daily notebook task, but its committed
+  workspace path must be changed when deploying into another Databricks workspace or user folder.
 - The approval gate is manually operated; coverage feedback has no built-in administration UI,
   notifications, or automatic-ingestion workflow.
 - Standard HNSW defaults are used; filtered ANN queries may return fewer projects than requested.

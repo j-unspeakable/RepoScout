@@ -1,0 +1,28 @@
+{
+  "name": "RepoScout Embedding Pipeline",
+  "format": "MULTI_TASK",
+  "max_concurrent_runs": 1,
+  "performance_target": "PERFORMANCE_OPTIMIZED",
+  "queue": {
+    "enabled": true
+  },
+  "tasks": [
+    {
+      "task_key": "embed_github_repos",
+      "run_if": "ALL_SUCCESS",
+      "notebook_task": {
+        "notebook_path": "/Workspace/Users/famous.jt33@gmail.com/RepoScout/notebook/process_repository_embeddings",
+        "source": "WORKSPACE"
+      },
+      "timeout_seconds": 0
+    }
+  ],
+  "timeout_seconds": 0,
+  "trigger": {
+    "pause_status": "UNPAUSED",
+    "periodic": {
+      "interval": 1,
+      "unit": "DAYS"
+    }
+  }
+}

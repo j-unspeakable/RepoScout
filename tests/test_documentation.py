@@ -22,6 +22,9 @@ def test_documentation_matches_committed_databricks_resource_contracts() -> None
 
 def test_readme_assets_and_operational_contracts_exist() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text()
+    job_definition = (
+        PROJECT_ROOT / "databricks" / "jobs" / "reposcout-embedding-job.json"
+    ).read_text()
     expected_images = (
         "01-dark-landing-1920x1080.png",
         "04-discover-results.png",
@@ -38,7 +41,7 @@ def test_readme_assets_and_operational_contracts_exist() -> None:
     assert "`Interested`, `To Try`, `In Progress`, or `Completed`" in readme
     assert "uv run alembic upgrade head --sql" in readme
     assert "shared key, `default`" in readme
-    assert "UI-managed Job that runs the embedding notebook **once daily**" in readme
+    assert "runs the embedding\nnotebook **once daily**" in readme
     assert "Repository collection is deliberately curated" in readme
     assert "manually reviews each" in readme
     assert "request at an approval gate" in readme
@@ -58,6 +61,19 @@ def test_readme_assets_and_operational_contracts_exist() -> None:
         "External services",
     ):
         assert boundary in readme
+
+    assert "databricks/jobs/reposcout-embedding-job.json" in readme
+    assert "databricks jobs create" in readme
+    assert "databricks jobs reset" in readme
+    assert '"task_key": "embed_github_repos"' in job_definition
+    assert '"interval": 1' in job_definition
+    assert '"unit": "DAYS"' in job_definition
+    assert '"pause_status": "UNPAUSED"' in job_definition
+    assert (
+        '"notebook_path": '
+        '"/Workspace/Users/famous.jt33@gmail.com/RepoScout/notebook/'
+        'process_repository_embeddings"'
+    ) in job_definition
 
 
 def test_local_environment_template_requires_process_app_env() -> None:
