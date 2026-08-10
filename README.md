@@ -97,6 +97,12 @@ README chunks, last indexing time, and user-friendly reasons for any coverage ga
 a natural-language indexing request with optional context when the current knowledge base does not
 cover their need. Repeated requests are retained as useful demand signals.
 
+**Repository collection is deliberately curated.** Coverage requests capture unmet demand; they do
+not discover or ingest repositories automatically. A human/platform operator manually reviews each
+request at an approval gate, selects appropriate GitHub repositories, and invokes the controlled
+ingestion API. After approved content reaches Lakebase, the scheduled Spark pipeline incrementally
+prepares it for semantic search.
+
 The frontend is framework-free HTML, CSS, and vanilla JavaScript. It provides dark and light
 themes, system-theme detection, keyboard and reduced-motion support, responsive layouts, safe DOM
 rendering, and relative URLs that work behind the Databricks Apps proxy.
@@ -331,6 +337,18 @@ The self-contained notebook does not import the FastAPI application. It uses its
 
 ## Data Pipeline and Operations
 
+### Curated collection and manual approval
+
+RepoScout keeps coverage feedback separate from ingestion. `POST /indexing-requests` records what a
+user hoped to find, but it has no path to GitHub, the ingestion service, or the Spark pipeline.
+Requests begin as `NEW` and support the review outcomes `REVIEWED`, `COVERED`, and `DECLINED`.
+
+Repository selection remains a manual governance decision. An operator reviews demand, approves an
+appropriate repository or search topic, and deliberately calls `POST /ingestions`. This approval
+gate prevents arbitrary user text from expanding the searchable collection. The once-daily Spark
+Job then picks up new or changed Lakebase README content incrementally; it does not process or act
+on coverage requests themselves.
+
 ### Schema and migrations
 
 Application tables are created only through handwritten Alembic migrations:
@@ -406,7 +424,9 @@ An unchanged rerun should report zero selected repositories and leave persisted 
 
 ### Databricks Job scheduling
 
-No Job definition is committed. Create a Databricks Job with the same notebook as a notebook task:
+The Databricks workspace has a UI-managed Job that runs the embedding notebook **once daily**. Its
+Job definition is not committed to this repository. Use the following settings to verify or
+recreate it in another workspace:
 
 1. Import or sync `notebook/process_repository_embeddings.ipynb` into the workspace.
 2. Select compute compatible with Spark, pandas UDFs, JDBC, and the pinned notebook dependencies.
@@ -415,7 +435,7 @@ No Job definition is committed. Create a Databricks Job with the same notebook a
 5. Start with `max_repositories=50`; reduce it when Free Edition or constrained compute needs
    shorter runs.
 6. Grant the Job identity source-table reads and chunk-table replacement permissions.
-7. Schedule at the desired cadence and monitor the final JSON run summary.
+7. Configure a once-daily schedule and monitor the final JSON run summary.
 8. Confirm an unchanged follow-up run selects zero repositories.
 
 ### Semantic retrieval and grounded RAG
@@ -468,7 +488,8 @@ Use this dependency order:
 11. Deploy or redeploy `repo-scout` from the repository root. At this point every `valueFrom` entry
     in the committed `app.yaml` has an attached resource.
 12. Validate the MCP tools and Supervisor-backed Ask flow before running state-changing demos.
-13. Run ingestion, then execute and schedule the embedding notebook.
+13. Run ingestion, execute the embedding notebook, and confirm the UI-managed once-daily Job is
+    enabled.
 
 This sequence distinguishes identity creation from resource attachment, permission grants, and
 application deployment without requiring the main App to be fully operational before the MCP and
@@ -713,8 +734,10 @@ Current intentional limitations:
 - Supervisor responses are non-streaming; interrupted writes have uncertain completion.
 - GitHub ingestion is synchronous and capped at 100 repositories per request.
 - Newly ingested READMEs become searchable only after the notebook runs.
-- Notebook scheduling is workspace-managed; no Databricks Job definition is committed.
-- Coverage feedback has no administration, notification, or automatic-ingestion workflow.
+- A UI-managed Databricks Job runs the notebook once daily, but its definition is not
+  source-controlled and must be recreated manually in another workspace.
+- The approval gate is manually operated; coverage feedback has no built-in administration UI,
+  notifications, or automatic-ingestion workflow.
 - Standard HNSW defaults are used; filtered ANN queries may return fewer projects than requested.
 - README files are the only embedded evidence source.
 - Live external-service acceptance remains operator-run.
@@ -725,7 +748,7 @@ Grounded future evolution should focus on:
 - Durable conversation history and idempotency support for state-changing agent actions.
 - Broader repository documentation and source-code ingestion.
 - Better repository classification and retrieval/reranking only when evaluation supports it.
-- A review workflow for repeated coverage requests.
+- A dedicated operator workflow for reviewing and prioritizing repeated coverage requests.
 - Structured monitoring for ingestion, notebook runs, retrieval quality, MCP calls, and Supervisor
   availability.
 - Scaling batch ingestion, Spark inference, and vector search when corpus size requires it.

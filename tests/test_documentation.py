@@ -38,6 +38,11 @@ def test_readme_assets_and_operational_contracts_exist() -> None:
     assert "`Interested`, `To Try`, `In Progress`, or `Completed`" in readme
     assert "uv run alembic upgrade head --sql" in readme
     assert "shared key, `default`" in readme
+    assert "UI-managed Job that runs the embedding notebook **once daily**" in readme
+    assert "Repository collection is deliberately curated" in readme
+    assert "manually reviews each" in readme
+    assert "request at an approval gate" in readme
+    assert "it has no path to GitHub, the ingestion service, or the Spark pipeline" in readme
     assert (
         "artifacts/**/ACCEPTANCE_REPORT.md"
         in (PROJECT_ROOT / ".gitignore").read_text().splitlines()
