@@ -87,7 +87,7 @@ an expandable **Why this matched** section, matching Discover's evidence experie
 payloads, tool arguments, similarity scores, approvals, and reasoning remain private. Stable chunk
 citations in an answer become controls that open the corresponding displayed README passage.
 
-![RepoScout conversational recommendations](artifacts/demo-walkthrough-screenshots/07a-ask-recommendations-start.png)
+![RepoScout grounded Ask recommendation with expandable README evidence](artifacts/demo-walkthrough-screenshots/18-ask-grounded-readme-evidence.png)
 
 ### My Projects
 
