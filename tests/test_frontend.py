@@ -121,10 +121,29 @@ def test_frontend_contract_is_safe_accessible_and_self_contained() -> None:
     assert "#2dd4bf" in styles
     assert page.count('data-nav-view="') == 3
     assert 'data-nav-view="projects"' in page
+    assert 'id="search-workspace"' in page
+    assert 'class="nav-flagship"' in page
+    assert 'class="nav-flagship-icon" aria-hidden="true"' in page
+    assert "setupPrimaryNavigation" in script
+    assert "scrollElementIntoView" in script
+    assert "scrollToWorkspace: true" in script
+    assert 'scrollElementIntoView(document.querySelector("#search-workspace"))' in script
+    assert "window.requestAnimationFrame(() => scrollElementIntoView(results))" in script
+    assert ".primary-nav .nav-flagship" in styles
+    assert "@keyframes flagship-glint" in styles
+    assert "scroll-margin-top: 92px" in styles
     assert "data-mode-view" not in page
     assert "mode-switcher" not in page
     assert "mode-switcher" not in styles
     assert page.count('class="example-query"') == 3
+    assert 'id="discover-top-k"' in page
+    assert 'name="top_k"' in page
+    assert 'min="1"' in page
+    assert 'max="10"' in page
+    assert 'value="5"' in page
+    assert "top_k: Number(rawTopK)" in script
+    assert "payload.top_k < 1 || payload.top_k > 10" in script
+    assert "const TOP_K" not in script
     assert "Learn RAG with Python" in page
     assert "Spark data pipelines" in page
     assert "AI agents with databases" in page
@@ -147,6 +166,8 @@ def test_frontend_contract_is_safe_accessible_and_self_contained() -> None:
     assert "have README content available" in script
     assert "could not currently be retrieved" in script
     assert "retrieval_status" not in script
+    assert 'element("span", "rank-badge", String(project.rank ?? "—"))' in script
+    assert "`#${project.rank" not in script
 
 
 def test_agent_chat_and_my_projects_frontend_contract() -> None:
@@ -187,6 +208,13 @@ def test_agent_chat_and_my_projects_frontend_contract() -> None:
     assert "typing-indicator" in styles
     assert "chat-transcript" in styles
     assert "chat-action-slot" in styles
+    assert (
+        ".chat-stop-button {\n"
+        "  border-color: transparent;\n"
+        "  color: var(--accent);\n"
+        "  background: transparent;\n"
+        "}" in styles
+    )
     assert "max-height: 160px" in styles
     assert "CHAT_ONBOARDING_MESSAGE" in script
     assert "evidence-based details or comparisons" in script
@@ -206,6 +234,12 @@ def test_agent_chat_and_my_projects_frontend_contract() -> None:
     assert "restart.hidden = !chatState.blocked" in script
     assert 'restart.addEventListener("click", resetChatConversation)' in script
     assert "scrollChatToLatest" in script
+    assert 'element("a", "answer-link", markdownLink[1])' in script
+    assert 'link.rel = "noopener noreferrer"' in script
+    assert "orderedList.start = Number(numbered[1])" in script
+    assert "orderedList.append(currentOrderedItem)" in script
+    assert "currentOrderedItem.append(nestedBulletList)" in script
+    assert ".answer-link" in styles
     speaker_rule = re.search(r"\.chat-speaker\s*\{(?P<body>.*?)\}", styles, flags=re.DOTALL)
     assert speaker_rule is not None
     assert "text-transform" not in speaker_rule.group("body")

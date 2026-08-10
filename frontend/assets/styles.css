@@ -150,6 +150,7 @@ a {
 }
 
 .primary-nav a {
+  position: relative;
   border-radius: 9px;
   padding: 9px 13px;
   color: var(--muted);
@@ -165,6 +166,62 @@ a {
 .primary-nav a[aria-current="page"] {
   color: var(--text);
   background: var(--raised);
+}
+
+.primary-nav .nav-flagship {
+  display: inline-flex;
+  overflow: hidden;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgb(45 212 191 / 34%);
+  color: #c8fff7;
+  background: linear-gradient(135deg, rgb(45 212 191 / 10%), rgb(16 185 129 / 5%));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 4%),
+    0 0 0 rgb(45 212 191 / 0%);
+  transition:
+    color 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 180ms ease,
+    transform 160ms ease;
+}
+
+.nav-flagship-icon {
+  color: var(--accent);
+  font-size: 0.8rem;
+  line-height: 1;
+  transition: transform 180ms ease;
+}
+
+.primary-nav .nav-flagship::after {
+  position: absolute;
+  inset: -50% auto -50% -55%;
+  width: 32%;
+  content: "";
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgb(216 255 249 / 30%), transparent);
+  transform: skewX(-18deg) translateX(-220%);
+  animation: flagship-glint 900ms 420ms ease-out 1 both;
+}
+
+.primary-nav a.nav-flagship:hover,
+.primary-nav a.nav-flagship[aria-current="page"] {
+  border-color: rgb(45 212 191 / 62%);
+  color: #effffc;
+  background: linear-gradient(135deg, rgb(45 212 191 / 19%), rgb(16 185 129 / 9%));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 7%),
+    0 0 22px rgb(45 212 191 / 15%);
+}
+
+.primary-nav a.nav-flagship:hover {
+  transform: translateY(-1px);
+}
+
+.primary-nav a.nav-flagship:hover .nav-flagship-icon,
+.primary-nav a.nav-flagship[aria-current="page"] .nav-flagship-icon {
+  transform: rotate(12deg) scale(1.08);
 }
 
 main {
@@ -309,6 +366,7 @@ main {
 }
 
 .search-shell {
+  scroll-margin-top: 92px;
   overflow: hidden;
   margin-bottom: 70px;
   border: 1px solid var(--border);
@@ -448,6 +506,28 @@ main {
   margin-top: 6px;
 }
 
+.answer-link {
+  color: var(--accent);
+  font-weight: 760;
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+  text-decoration-color: rgb(45 212 191 / 36%);
+  text-underline-offset: 3px;
+}
+
+.answer-link:hover {
+  color: var(--text);
+  text-decoration-color: currentcolor;
+}
+
+.chat-message-body ol > li + li {
+  margin-top: 14px;
+}
+
+.chat-message-body ol > li > ul {
+  margin-top: 8px;
+}
+
 .typing-indicator {
   display: flex;
   width: max-content;
@@ -569,9 +649,9 @@ main {
 }
 
 .chat-stop-button {
-  border-color: rgb(251 113 133 / 34%);
-  color: var(--error);
-  background: var(--error-soft);
+  border-color: transparent;
+  color: var(--accent);
+  background: transparent;
 }
 
 .chat-stop-button span {
@@ -582,8 +662,9 @@ main {
 }
 
 .chat-stop-button:hover {
-  border-color: var(--error);
-  color: #fda4af;
+  border-color: rgb(45 212 191 / 30%);
+  color: #5eead4;
+  background: rgb(45 212 191 / 9%);
 }
 
 .chat-composer-hint {
@@ -848,7 +929,7 @@ textarea[aria-invalid="true"] {
   margin: 0;
   padding: 0;
   border: 0;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
 }
 
@@ -961,6 +1042,7 @@ textarea[aria-invalid="true"] {
 }
 
 .results-stack {
+  scroll-margin-top: 92px;
   display: grid;
   margin-top: 20px;
   gap: 16px;
@@ -1382,6 +1464,20 @@ textarea[aria-invalid="true"] {
   }
 }
 
+@keyframes flagship-glint {
+  from {
+    opacity: 0;
+    transform: skewX(-18deg) translateX(-220%);
+  }
+  35% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: skewX(-18deg) translateX(620%);
+  }
+}
+
 @media (max-width: 760px) {
   .header-inner,
   main,
@@ -1488,6 +1584,14 @@ textarea[aria-invalid="true"] {
     font-size: 0.75rem;
   }
 
+  .primary-nav .nav-flagship {
+    gap: 4px;
+  }
+
+  .nav-flagship-icon {
+    display: none;
+  }
+
   .chat-panel .panel-heading {
     flex-wrap: wrap;
   }
@@ -1544,8 +1648,14 @@ textarea[aria-invalid="true"] {
 
   .metric-card:hover,
   .project-card:hover,
+  .primary-nav a.nav-flagship:hover,
   .primary-button:hover:not(:disabled),
   .chat-send-button:hover:not(:disabled) {
     transform: none;
+  }
+
+  .primary-nav .nav-flagship::after {
+    display: none;
+    animation: none;
   }
 }

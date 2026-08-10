@@ -24,7 +24,10 @@
         </a>
         <nav class="primary-nav" aria-label="Primary navigation">
           <a href="#discover" data-nav-view="discover">Discover</a>
-          <a href="#ask" data-nav-view="ask">Ask RepoScout</a>
+          <a class="nav-flagship" href="#ask" data-nav-view="ask">
+            <span class="nav-flagship-icon" aria-hidden="true">✦</span>
+            <span>Ask RepoScout</span>
+          </a>
           <a href="#projects" data-nav-view="projects">My Projects</a>
         </nav>
       </div>
@@ -71,7 +74,7 @@
         </p>
       </section>
 
-      <section class="search-shell" aria-label="RepoScout workspace">
+      <section id="search-workspace" class="search-shell" aria-label="RepoScout workspace">
         <div class="mode-intro">
           <div>
             <p class="section-kicker">Explore the index</p>
@@ -118,7 +121,7 @@
               </div>
 
               <fieldset class="filter-grid">
-                <legend>Optional filters</legend>
+                <legend>Search options</legend>
                 <div class="field">
                   <label for="discover-language">Language</label>
                   <input
@@ -140,6 +143,20 @@
                     step="1"
                     inputmode="numeric"
                     placeholder="100"
+                  >
+                </div>
+                <div class="field">
+                  <label for="discover-top-k">Number of results</label>
+                  <input
+                    id="discover-top-k"
+                    name="top_k"
+                    type="number"
+                    min="1"
+                    max="10"
+                    step="1"
+                    inputmode="numeric"
+                    value="5"
+                    required
                   >
                 </div>
               </fieldset>
@@ -329,7 +346,10 @@
     </main>
 
     <footer class="site-footer">
-      <p>RepoScout recommendations are grounded in indexed open-source README documentation.</p>
+      <p>
+        RepoScout recommendations are grounded in indexed README documentation from open-source
+        GitHub repositories.
+      </p>
     </footer>
   </body>
 </html>

@@ -1,5 +1,4 @@
 const APPLICATION_BASE_URL = new URL("./", document.baseURI);
-const TOP_K = 5;
 const CHAT_SESSION_KEY = "reposcout.ask-session.v1";
 const MAX_VISIBLE_CHAT_MESSAGES = 24;
 const MAX_CHAT_COMPOSER_HEIGHT = 160;
@@ -175,7 +174,17 @@ function activeViewFromHash() {
   return window.location.hash === "#projects" ? "projects" : "discover";
 }
 
-function showView(viewName, { moveFocus = false } = {}) {
+function scrollElementIntoView(target) {
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+  target.scrollIntoView({
+    behavior: prefersReducedMotion() ? "auto" : "smooth",
+    block: "start",
+  });
+}
+
+function showView(viewName, { moveFocus = false, scrollToWorkspace = false } = {}) {
   const title = document.querySelector("#mode-title");
   const titles = {
     ask: "Ask RepoScout",
@@ -209,6 +218,38 @@ function showView(viewName, { moveFocus = false } = {}) {
   } else if (viewName === "ask") {
     scrollChatToLatest(chatState.messages.length === 0);
   }
+  if (scrollToWorkspace) {
+    window.requestAnimationFrame(() => {
+      scrollElementIntoView(document.querySelector("#search-workspace"));
+    });
+  }
+}
+
+function setupPrimaryNavigation() {
+  for (const link of document.querySelectorAll("[data-nav-view]")) {
+    link.addEventListener("click", (event) => {
+      if (link.dataset.navView !== activeViewFromHash()) {
+        return;
+      }
+      event.preventDefault();
+      showView(link.dataset.navView, { moveFocus: true, scrollToWorkspace: true });
+    });
+  }
+
+  document.querySelector(".brand").addEventListener("click", (event) => {
+    event.preventDefault();
+    if (window.location.hash !== "#discover") {
+      window.history.pushState(
+        null,
+        "",
+        `${window.location.pathname}${window.location.search}#discover`,
+      );
+    }
+    showView("discover");
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? "auto" : "smooth" });
+    });
+  });
 }
 
 function normalizeInitialHash() {
@@ -237,6 +278,7 @@ function buildSearchPayload(form) {
   const query = String(data.get("query") ?? "").trim();
   const language = String(data.get("language") ?? "").trim();
   const rawStars = String(data.get("minimum_stars") ?? "").trim();
+  const rawTopK = String(data.get("top_k") ?? "").trim();
   const filters = {};
 
   if (language) {
@@ -248,7 +290,7 @@ function buildSearchPayload(form) {
 
   return {
     query,
-    top_k: TOP_K,
+    top_k: Number(rawTopK),
     ...(Object.keys(filters).length > 0 ? { filters } : {}),
   };
 }
@@ -256,8 +298,10 @@ function buildSearchPayload(form) {
 function validateSearchForm(form, payload) {
   const query = form.querySelector("textarea[name='query']");
   const stars = form.querySelector("input[name='minimum_stars']");
+  const topK = form.querySelector("input[name='top_k']");
   query.setAttribute("aria-invalid", "false");
   stars.setAttribute("aria-invalid", "false");
+  topK.setAttribute("aria-invalid", "false");
 
   if (!payload.query) {
     query.setAttribute("aria-invalid", "true");
@@ -276,6 +320,11 @@ function validateSearchForm(form, payload) {
     stars.setAttribute("aria-invalid", "true");
     stars.focus();
     return "Minimum stars must be a nonnegative whole number.";
+  }
+  if (!Number.isInteger(payload.top_k) || payload.top_k < 1 || payload.top_k > 10) {
+    topK.setAttribute("aria-invalid", "true");
+    topK.focus();
+    return "Number of results must be a whole number from 1 to 10.";
   }
   return null;
 }
@@ -370,7 +419,7 @@ function createProjectCard(project, citationTargets) {
   const header = element("div", "project-header");
   const titleWrap = element("div", "project-title-wrap");
   titleWrap.append(
-    element("span", "rank-badge", `#${project.rank ?? "—"}`),
+    element("span", "rank-badge", String(project.rank ?? "—")),
     element("h3", "", project.full_name || project.name || "Unnamed repository"),
   );
   header.append(titleWrap);
@@ -436,14 +485,26 @@ function createProjectCard(project, citationTargets) {
 }
 
 function appendAnswerInline(parent, text, citationTargets) {
-  const pattern = /(\[[^\]\n\s]+\/[^\]\n\s]+#chunk-\d+\]|\*\*[^*\n]+\*\*)/g;
+  const pattern = /(\[[^\]\n]+\]\(https:\/\/github\.com\/[^)\s]+\)|\[[^\]\n\s]+\/[^\]\n\s]+#chunk-\d+\]|\*\*[^*\n]+\*\*)/g;
   let cursor = 0;
   for (const match of text.matchAll(pattern)) {
     if (match.index > cursor) {
       parent.append(document.createTextNode(text.slice(cursor, match.index)));
     }
     const token = match[0];
-    if (token.startsWith("**") && token.endsWith("**")) {
+    const markdownLink = token.match(/^\[([^\]\n]+)\]\((https:\/\/github\.com\/[^)\s]+)\)$/);
+    if (markdownLink) {
+      const githubUrl = safeGitHubUrl(markdownLink[2]);
+      if (githubUrl) {
+        const link = element("a", "answer-link", markdownLink[1]);
+        link.href = githubUrl.href;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        parent.append(link);
+      } else {
+        parent.append(document.createTextNode(token));
+      }
+    } else if (token.startsWith("**") && token.endsWith("**")) {
       parent.append(element("strong", "", token.slice(2, -2)));
     } else if (citationTargets.has(token)) {
       const button = element("button", "citation-button", token);
@@ -468,34 +529,57 @@ function appendAnswerInline(parent, text, citationTargets) {
 
 function renderAnswerBody(container, answer, citationTargets) {
   const lines = String(answer ?? "").split(/\r?\n/);
-  let list = null;
-  let listType = null;
+  let orderedList = null;
+  let currentOrderedItem = null;
+  let nestedBulletList = null;
+  let unorderedList = null;
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
     if (!line) {
-      list = null;
-      listType = null;
       continue;
     }
 
     const bullet = line.match(/^[-*]\s+(.+)/);
-    const numbered = line.match(/^\d+[.)]\s+(.+)/);
-    if (bullet || numbered) {
-      const nextType = bullet ? "ul" : "ol";
-      if (list === null || listType !== nextType) {
-        list = element(nextType);
-        listType = nextType;
-        container.append(list);
+    const numbered = line.match(/^(\d+)[.)]\s+(.+)/);
+    if (numbered) {
+      if (orderedList === null) {
+        orderedList = element("ol");
+        orderedList.start = Number(numbered[1]);
+        container.append(orderedList);
       }
-      const item = element("li");
-      appendAnswerInline(item, (bullet ?? numbered)[1], citationTargets);
-      list.append(item);
+      currentOrderedItem = element("li");
+      appendAnswerInline(currentOrderedItem, numbered[2], citationTargets);
+      orderedList.append(currentOrderedItem);
+      nestedBulletList = null;
+      unorderedList = null;
+      continue;
+    }
+    if (bullet) {
+      if (currentOrderedItem) {
+        if (nestedBulletList === null) {
+          nestedBulletList = element("ul");
+          currentOrderedItem.append(nestedBulletList);
+        }
+        const item = element("li");
+        appendAnswerInline(item, bullet[1], citationTargets);
+        nestedBulletList.append(item);
+      } else {
+        if (unorderedList === null) {
+          unorderedList = element("ul");
+          container.append(unorderedList);
+        }
+        const item = element("li");
+        appendAnswerInline(item, bullet[1], citationTargets);
+        unorderedList.append(item);
+      }
       continue;
     }
 
-    list = null;
-    listType = null;
+    orderedList = null;
+    currentOrderedItem = null;
+    nestedBulletList = null;
+    unorderedList = null;
     const heading = line.match(/^#{1,4}\s+(.+)/);
     const paragraph = element(heading ? "h4" : "p");
     appendAnswerInline(paragraph, heading ? heading[1] : line, citationTargets);
@@ -1170,6 +1254,9 @@ function setupSearchMode({ formId, statusId, resultsId, endpoint, mode }) {
         ? "RepoScout is reviewing the indexed projects. This may take several seconds…"
         : "Searching repositories…",
     );
+    if (mode === "discover") {
+      window.requestAnimationFrame(() => scrollElementIntoView(results));
+    }
 
     try {
       const response = await apiRequest(endpoint, {
@@ -1206,8 +1293,11 @@ function setupSearchMode({ formId, statusId, resultsId, endpoint, mode }) {
 
 document.querySelector("#corpus-retry").addEventListener("click", loadCorpusSummary);
 document.querySelector("#projects-refresh").addEventListener("click", loadSavedProjects);
-window.addEventListener("hashchange", () => showView(activeViewFromHash(), { moveFocus: true }));
+window.addEventListener("hashchange", () =>
+  showView(activeViewFromHash(), { moveFocus: true, scrollToWorkspace: true }),
+);
 
+setupPrimaryNavigation();
 normalizeInitialHash();
 setupExampleQueries();
 setupIndexingRequest();
