@@ -82,6 +82,12 @@ class SupervisorClientProtocol(Protocol):
 
 
 class SupervisorClient:
+    """Call the Supervisor endpoint and safely replay bounded MCP approval rounds.
+
+    Only the five allowlisted RepoScout tools are approved. Intermediate response items remain
+    server-side and are returned to ``AssistantService`` solely for stateless endpoint replay.
+    """
+
     _MAX_RESPONSE_BYTES = 512_000
     _MAX_MCP_APPROVAL_ROUNDS = 8
     _ALLOWED_MCP_TOOLS = frozenset(
@@ -339,6 +345,8 @@ class AssistantReply:
 
 
 class AssistantService:
+    """Keep bounded, process-local Supervisor history behind opaque conversation IDs."""
+
     def __init__(
         self,
         client: SupervisorClientProtocol,

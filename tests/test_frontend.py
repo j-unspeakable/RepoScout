@@ -86,10 +86,14 @@ def test_frontend_uses_one_proxy_safe_application_base() -> None:
     assert script.count("fetch(") == 1
     assert 'apiRequest("corpus/summary")' in script
     assert 'apiRequest("indexing-requests"' in script
-    assert 'endpoint: "search/semantic"' in script
+    assert 'apiRequest("search/semantic"' in script
     assert 'apiRequest("assistant/messages"' in script
     assert 'apiRequest("saved-projects"' in script
     assert 'endpoint: "search/ask"' not in script
+    assert "setupDiscoverSearch" in script
+    assert "setupSearchMode" not in script
+    assert "renderAskResponse" not in script
+    assert 'mode === "ask"' not in script
     assert 'application.frontend("/", directory=FRONTEND_DIRECTORY, fallback=None)' in main_source
 
     forbidden = ("localhost", "127.0.0.1", "databricksapps.com", 'fetch("/', "fetch('/")

@@ -604,37 +604,6 @@ function renderProjects(
   results.replaceChildren(fragment);
 }
 
-function renderAskResponse(payload, results) {
-  const projects = Array.isArray(payload.projects) ? payload.projects : [];
-  const citationTargets = new Map();
-  const projectFragment = document.createDocumentFragment();
-  for (const project of projects) {
-    projectFragment.append(createProjectCard(project, citationTargets));
-  }
-
-  const fragment = document.createDocumentFragment();
-  const answer = element("article", "answer-card");
-  const header = element("div", "answer-header");
-  header.append(element("h3", "", "RepoScout’s answer"), element("span", "grounded-badge", "Grounded"));
-  const body = element("div", "answer-body");
-  renderAnswerBody(body, payload.answer || "RepoScout could not produce an answer.", citationTargets);
-  answer.append(header, body);
-  fragment.append(answer);
-
-  if (projects.length > 0) {
-    fragment.append(element("p", "recommendation-heading", "Recommended projects"), projectFragment);
-  } else {
-    const empty = element("div", "empty-panel");
-    empty.append(
-      element("h3", "", "No supporting projects found"),
-      element("p", "", "Try broader wording or remove one of the optional filters."),
-    );
-    addCoverageAction(empty, payload.query || "");
-    fragment.append(empty);
-  }
-  results.replaceChildren(fragment);
-}
-
 const chatState = {
   conversationId: null,
   messages: [],
@@ -1221,10 +1190,10 @@ function setRequestLoading(form, loading) {
   cancel.hidden = !loading;
 }
 
-function setupSearchMode({ formId, statusId, resultsId, endpoint, mode }) {
-  const form = document.querySelector(`#${formId}`);
-  const status = document.querySelector(`#${statusId}`);
-  const results = document.querySelector(`#${resultsId}`);
+function setupDiscoverSearch() {
+  const form = document.querySelector("#discover-form");
+  const status = document.querySelector("#discover-status");
+  const results = document.querySelector("#discover-results");
   const cancel = form.querySelector(".cancel-button");
   const submit = form.querySelector("button[type='submit']");
   let controller = null;
@@ -1247,32 +1216,21 @@ function setupSearchMode({ formId, statusId, resultsId, endpoint, mode }) {
     controller = new AbortController();
     setRequestLoading(form, true);
     results.setAttribute("aria-busy", "true");
-    showLoading(results, mode === "ask" ? 3 : 2);
-    setStatus(
-      status,
-      mode === "ask"
-        ? "RepoScout is reviewing the indexed projects. This may take several seconds…"
-        : "Searching repositories…",
-    );
-    if (mode === "discover") {
-      window.requestAnimationFrame(() => scrollElementIntoView(results));
-    }
+    showLoading(results, 2);
+    setStatus(status, "Searching repositories…");
+    window.requestAnimationFrame(() => scrollElementIntoView(results));
 
     try {
-      const response = await apiRequest(endpoint, {
+      const response = await apiRequest("search/semantic", {
         method: "POST",
         body: JSON.stringify(payload),
         signal: controller.signal,
       });
-      if (mode === "ask") {
-        renderAskResponse(response, results);
-      } else {
-        renderProjects(response.projects, results, {
-          emptyTitle: "No matching projects yet",
-          emptyMessage: "Try broader wording, another language, or a lower star filter.",
-          coverageQuery: payload.query,
-        });
-      }
+      renderProjects(response.projects, results, {
+        emptyTitle: "No matching projects yet",
+        emptyMessage: "Try broader wording, another language, or a lower star filter.",
+        coverageQuery: payload.query,
+      });
       setStatus(status, "");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
@@ -1302,11 +1260,5 @@ normalizeInitialHash();
 setupExampleQueries();
 setupIndexingRequest();
 setupAssistantChat();
-setupSearchMode({
-  formId: "discover-form",
-  statusId: "discover-status",
-  resultsId: "discover-results",
-  endpoint: "search/semantic",
-  mode: "discover",
-});
+setupDiscoverSearch();
 loadCorpusSummary();

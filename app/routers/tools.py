@@ -49,7 +49,7 @@ async def get_project_details(
 ) -> ProjectDetailsResponse:
     try:
         record = await service.get_project_details(user_key, repo_id, evidence_limit)
-    except (ProjectNotFoundError, SavedProjectNotFoundError) as exc:
+    except ProjectNotFoundError as exc:
         _raise_not_found(exc)
     except ProjectToolsUnavailableError as exc:
         _raise_unavailable(exc)

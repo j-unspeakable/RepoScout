@@ -1,0 +1,50 @@
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).parents[1]
+
+
+def test_documentation_matches_committed_databricks_resource_contracts() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text()
+    main_app = (PROJECT_ROOT / "app.yaml").read_text()
+    mcp_app = (PROJECT_ROOT / "mcp-server" / "app.yaml").read_text()
+
+    for resource_key in ("postgres", "github_token", "openrouter_api_key", "supervisor_endpoint"):
+        assert f"valueFrom: {resource_key}" in main_app
+        assert f"`{resource_key}`" in readme
+
+    assert "valueFrom: reposcout" in mcp_app
+    assert "name: REPOSCOUT_APP_NAME" in mcp_app
+    assert "`mcp-repo-scout`" in readme
+    assert "resource key `reposcout`" in readme
+    for stale_name in ("mcp-reposcout", "reposcout-api", "REPOSCOUT_API_APP_NAME"):
+        assert stale_name not in readme
+
+
+def test_readme_assets_and_operational_contracts_exist() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text()
+    expected_images = (
+        "reposcout-overview-dark.png",
+        "reposcout-discover-results.png",
+        "reposcout-ask.png",
+        "reposcout-my-projects.png",
+    )
+    for image in expected_images:
+        assert (PROJECT_ROOT / "docs" / "images" / image).is_file()
+        assert f"docs/images/{image}" in readme
+
+    assert "## Table of Contents" in readme
+    assert "`max_repositories` | `50`" in readme
+    assert "`INTERESTED`, `TO_TRY`, `IN_PROGRESS`, `COMPLETED`" not in readme
+    assert "`Interested`, `To Try`, `In Progress`, or `Completed`" in readme
+    assert "uv run alembic upgrade head --sql" in readme
+    assert "shared key, `default`" in readme
+    assert "artifacts/" in (PROJECT_ROOT / ".gitignore").read_text().splitlines()
+
+
+def test_local_environment_template_requires_process_app_env() -> None:
+    template_lines = (PROJECT_ROOT / ".env.example").read_text().splitlines()
+
+    assert "APP_ENV=local" not in template_lines
+    assert any("Export APP_ENV=local" in line for line in template_lines)
+    assert "GITHUB_API_URL=https://api.github.com" in template_lines
+    assert "DB_POOL_TIMEOUT_SECONDS=30" in template_lines

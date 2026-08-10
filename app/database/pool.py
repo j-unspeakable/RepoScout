@@ -14,6 +14,12 @@ class ConnectionProvider(Protocol):
 
 
 class LakebasePool:
+    """Manage Lakebase connections with a fresh OAuth credential per physical connection.
+
+    Psycopg calls the async ``kwargs`` provider before opening each physical connection, so
+    credential generation happens before authentication rather than in a post-connect hook.
+    """
+
     def __init__(
         self,
         settings: Settings,

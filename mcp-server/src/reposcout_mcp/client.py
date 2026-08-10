@@ -30,6 +30,12 @@ class RepoScoutClientError(RuntimeError):
 
 
 class RepoScoutClient:
+    """Delegate tools using local direct access or Databricks App authentication.
+
+    Deployed mode caches only the resolved App URL. Authentication headers are regenerated from
+    the Databricks SDK for every request and are never stored in configuration.
+    """
+
     def __init__(
         self,
         settings: McpSettings,
