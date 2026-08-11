@@ -79,6 +79,8 @@ class SavedProjectListRecord:
 class ProjectToolsRepositoryProtocol(Protocol):
     async def list_saved_projects(self, user_key: str) -> list[SavedProjectListRecord]: ...
 
+    async def remove_saved_project(self, user_key: str, repo_id: int) -> bool: ...
+
     async def get_project_details(
         self, user_key: str, repo_id: int, evidence_limit: int
     ) -> ProjectDetailsRecord | None: ...
@@ -182,6 +184,23 @@ class ProjectToolsRepository:
             )
             for row in project_rows
         ]
+
+    async def remove_saved_project(self, user_key: str, repo_id: int) -> bool:
+        try:
+            async with self._database.connection() as connection:
+                async with connection.cursor(row_factory=dict_row) as cursor:
+                    await cursor.execute(
+                        """
+                        DELETE FROM saved_projects
+                        WHERE user_key = %s AND repo_id = %s
+                        RETURNING saved_project_id
+                        """,
+                        (user_key, repo_id),
+                    )
+                    row = await cursor.fetchone()
+        except psycopg.Error as exc:
+            raise ProjectToolsRepositoryError("Unable to remove saved project") from exc
+        return row is not None
 
     async def get_project_details(
         self, user_key: str, repo_id: int, evidence_limit: int

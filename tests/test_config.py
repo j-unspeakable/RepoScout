@@ -117,6 +117,7 @@ def test_search_threshold_is_bounded_and_openrouter_key_is_optional(
     assert settings.llm_max_output_tokens == 2000
     assert settings.supervisor_endpoint_name is None
     assert settings.supervisor_request_timeout_seconds == 120
+    assert settings.supervisor_task_timeout_seconds == 300
 
     with pytest.raises(ValidationError, match="less than or equal to 1"):
         Settings(app_env=AppEnvironment.TEST, search_min_similarity=1.1)
@@ -126,6 +127,9 @@ def test_search_threshold_is_bounded_and_openrouter_key_is_optional(
 
     with pytest.raises(ValidationError, match="less than or equal to 300"):
         Settings(app_env=AppEnvironment.TEST, supervisor_request_timeout_seconds=301)
+
+    with pytest.raises(ValidationError, match="less than or equal to 600"):
+        Settings(app_env=AppEnvironment.TEST, supervisor_task_timeout_seconds=601)
 
 
 def test_openrouter_secret_is_redacted_from_settings_representation() -> None:

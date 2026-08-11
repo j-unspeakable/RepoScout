@@ -49,6 +49,7 @@ class Settings(BaseSettings):
 
     supervisor_endpoint_name: str | None = None
     supervisor_request_timeout_seconds: float = Field(default=120.0, gt=0, le=300)
+    supervisor_task_timeout_seconds: float = Field(default=300.0, gt=0, le=600)
 
     @model_validator(mode="after")
     def validate_environment_configuration(self) -> "Settings":

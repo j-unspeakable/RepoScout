@@ -68,8 +68,9 @@ follow-ups, saved-project actions, and project organization in My Projects.
 
 Users describe what they want to learn or build, optionally filter by primary language and stars,
 and request between one and ten results. Each repository result includes useful GitHub metadata and
-expandable indexed README evidence. Similarity scores and vector-search internals remain hidden
-from the normal interface.
+expandable indexed README evidence. The expanded evidence may show a qualitative `Strong`,
+`Moderate`, or `Limited` README match derived from the existing cosine similarity. Numeric scores,
+percentages, and vector-search internals remain hidden from the normal interface.
 
 ![RepoScout Discover results](artifacts/demo-walkthrough-screenshots/04-discover-results.png)
 
@@ -77,15 +78,17 @@ from the normal interface.
 
 Ask RepoScout supports natural follow-ups such as comparing returned projects, requesting more
 detail, saving a repository, changing its progress status, or adding a note. Only visible user and
-assistant messages and their displayed README evidence reach browser session storage; MCP calls,
-tool arguments, raw tool outputs, similarity scores, and reasoning stay on the backend.
+assistant messages and their validated project-card data reach browser session storage; MCP calls,
+tool arguments, raw tool outputs, approvals, and reasoning stay on the backend.
 
 Ask recommendations are still evidence-backed: the Supervisor searches through RepoScout's MCP
-tools and receives bounded, indexed README excerpts for the repositories it inspects. That evidence
-is filtered through a typed public response and appears beneath the relevant assistant message as
-an expandable **Why this matched** section, matching Discover's evidence experience. Raw MCP
-payloads, tool arguments, similarity scores, approvals, and reasoning remain private. Stable chunk
-citations in an answer become controls that open the corresponding displayed README passage.
+tools and receives bounded, indexed README excerpts for the repositories it inspects. A typed
+presentation mode keeps search/list/recommendation results as deterministic project cards with
+expandable **Why this matched** evidence, while comparison and project-detail turns emphasize
+conversational reasoning followed by compact validated repository links. Explicit evidence requests
+restore full cards. Write confirmations and ordinary conversation remain text-only. Raw MCP
+payloads, tool arguments, approvals, and reasoning remain private. Numeric similarity is used only
+to derive the qualitative README-match label on evidence cards.
 
 ![RepoScout grounded Ask recommendation with expandable README evidence](artifacts/demo-walkthrough-screenshots/18-ask-grounded-readme-evidence.png)
 
@@ -297,7 +300,8 @@ can therefore take longer while the model is downloaded and initialized.
 | `LLM_REQUEST_TIMEOUT` | No | OpenRouter timeout in seconds |
 | `LLM_MAX_OUTPUT_TOKENS` | No | Completion headroom; default 2000 |
 | `SUPERVISOR_ENDPOINT_NAME` | For browser Ask | Supervisor serving-endpoint name, not a secret |
-| `SUPERVISOR_REQUEST_TIMEOUT_SECONDS` | No | Supervisor timeout; default 120 seconds |
+| `SUPERVISOR_REQUEST_TIMEOUT_SECONDS` | No | Per-cycle Supervisor timeout; default 120 seconds |
+| `SUPERVISOR_TASK_TIMEOUT_SECONDS` | No | Overall bounded turn deadline; default 300 seconds |
 
 Generated Lakebase passwords are never settings. The pool's async connection-parameter provider
 generates a fresh credential before every new physical PostgreSQL connection and recycles
@@ -583,7 +587,7 @@ GRANT SELECT, INSERT
 ON TABLE public.indexing_requests
 TO "<REPO_SCOUT_APP_SERVICE_PRINCIPAL_CLIENT_ID>";
 
-GRANT SELECT, INSERT, UPDATE
+GRANT SELECT, INSERT, UPDATE, DELETE
 ON TABLE public.saved_projects
 TO "<REPO_SCOUT_APP_SERVICE_PRINCIPAL_CLIENT_ID>";
 
@@ -637,8 +641,11 @@ create the `vector` extension. The MCP App requires no Lakebase role or table gr
 | `GET /ingestions/{run_id}` | Recorded ingestion status and counters |
 | `POST /search/semantic` | Deterministic semantic repository retrieval |
 | `POST /search/ask` | Grounded OpenRouter RAG response with evidence |
-| `POST /assistant/messages` | Bounded Supervisor-backed conversational turn |
+| `POST /assistant/messages` | JSON-compatible Supervisor-backed conversational turn |
+| `POST /assistant/messages/stream` | Supervisor turn with sanitized SSE progress and one final result |
+| `POST /assistant/turns/{turn_id}/cancel` | Classify a stopped turn as completed, cancelled, or uncertain |
 | `GET /saved-projects` | Read-only browser My Projects data |
+| `DELETE /saved-projects/{repo_id}` | Remove browser My Projects state and its cascaded notes |
 | `POST /indexing-requests` | Review-only natural-language coverage request |
 
 ### Machine API used by MCP
@@ -653,6 +660,9 @@ create the `vector` extension. The MCP App requires no Lakebase role or table gr
 
 Repeated saves use `ON CONFLICT DO NOTHING` followed by retrieval, preserving the existing ID,
 status, `saved_at`, and `updated_at`. Status updates and notes require a previously saved project.
+Saved-project removal is available only through the browser API. It deletes only the scoped
+`saved_projects` row; existing foreign-key cascade behavior removes its notes without affecting
+repository metadata, README content, embeddings, chunks, or search coverage.
 
 ### MCP tools
 
@@ -677,28 +687,60 @@ The Supervisor should use RepoScout tools for repository searches, details, and 
 actions; use returned repository IDs; save before status/note actions; and never invent metadata or
 tool success. State-changing tools should run only after an explicit user request.
 
+The complete version-controlled prompt is available at
+[`databricks/reposcout-supervisor-instructions.md`](databricks/reposcout-supervisor-instructions.md).
+Use that complete file as the configured Agent instructions rather than maintaining a second prompt
+copy. It asks the Supervisor for concise recommendation synthesis, richer comparison and detail
+reasoning, and short write confirmations. Its approximate word targets are guidance only; the
+application does not truncate useful grounded reasoning to enforce them.
+
+RepoScout’s application renders repository metadata and README evidence through its typed
+presentation contract; the Supervisor supplies grounded conversational interpretation rather than
+reconstructing that structured UI.
+
+The application does not rely on instruction compliance for presentation correctness. For a
+card-mode answer that clearly reconstructs a metadata catalogue, the backend applies a deterministic bounded fallback.
+Comparison and detail turns preserve useful reasoning and use compact structured references rather
+than full cards. Narrow cleanup removes only safely recognized duplicate canonical links or
+parenthetical repository IDs; otherwise it preserves the original prose. Prompt word targets never
+trigger application-side truncation. Original response items remain available only in bounded
+backend conversation history for replay.
+
 The read tools return repository metadata and bounded README evidence, including deterministic
 chunk identity, to the Supervisor. These tool results are retained in the backend conversation
 context so follow-up answers can remain grounded. For the current turn, RepoScout extracts only a
-bounded, validated projection of repository name, GitHub URL, chunk order, and README text. The Ask
-UI renders that projection in expandable **Why this matched** sections while keeping MCP calls,
-arguments, raw outputs, similarity scores, approvals, and reasoning private. The separate
+bounded, validated projection of repository metadata, GitHub URL, semantic similarity, chunk order,
+and README text from structured read-tool output. The Ask UI renders that projection using the same
+project cards as Discover, with qualitative match labels inside expandable **Why this matched**
+sections. It does not infer cards from Supervisor Markdown, and write-action confirmations remain
+text-only. MCP calls, arguments, raw outputs, approvals, and reasoning remain private. The separate
 OpenRouter-backed `POST /search/ask` contract continues to return its exact evidence and stable
 citations for API consumers.
 
 RepoScout sends the complete retained response-item history plus each new user message to the
-Databricks Responses endpoint. The backend automatically handles bounded approval rounds only for
-the five allowlisted RepoScout tools. The browser receives the final assistant text, sanitized
-display evidence for the current turn, and an opaque conversation ID—never the response-item
-history itself.
+Databricks Responses endpoint through `input`. The backend enables Databricks long-task execution,
+handles bounded approval and continuation rounds only for the five allowlisted RepoScout tools,
+and applies a five-minute overall deadline in addition to the per-cycle timeout. Both the JSON and
+SSE endpoints use this same execution engine and commit a conversation turn only after a validated
+complete response. The browser receives the final assistant text, sanitized display evidence for
+the current turn, and an opaque conversation ID—never the response-item history itself.
+
+The normal Ask UI consumes native FastAPI SSE. Progress labels such as **Searching projects…**,
+**Saving projects…**, and **Adding notes…** are projected from validated allowlisted activity and
+coalesced when repeated. They do not expose tool names, arguments, repository IDs, approval or
+continuation payloads, or reasoning. The final browser response remains the same typed assistant
+message used by the JSON endpoint.
 
 Conversations retain 12 completed turns, expire after one hour, cap the process at 100
 least-recently-used sessions, and cap serialized history size. Concurrent turns for one
 conversation return `409`; expired or restart-lost sessions return `410`.
 
-If the browser stops waiting or the final response cannot be confirmed after dispatch, RepoScout
-does not retry. A save, status change, or append-only note may already have completed, so the UI
-directs the user to inspect My Projects before deliberately retrying.
+If the user stops before any state-changing tool can execute, RepoScout cancels upstream work,
+restores the draft, releases the conversation lock, and keeps the chat usable. If a save, status
+change, or append-only note may already have executed, the outcome remains uncertain: RepoScout
+does not retry and directs the user to inspect My Projects before deliberately retrying. A bounded
+60-second process-local completion tombstone prevents a Stop click racing a successful final result
+from being misclassified as uncertain; it is not durable task storage.
 
 ## Security and Identity Model
 
@@ -792,7 +834,10 @@ Current intentional limitations:
 - Saved state is shared under the internal `default` user.
 - Supervisor conversation history is process-local, bounded, one-hour, and lost on restart.
 - The one-worker deployment is part of the in-memory conversation assumption.
-- Supervisor responses are non-streaming; interrupted writes have uncertain completion.
+- Browser Ask receives sanitized SSE progress, while final responses remain non-streaming model
+  outputs. Interrupted state-changing actions can still have uncertain completion.
+- Active Supervisor turns and 60-second completed-turn race tombstones are process-local and are
+  lost on restart; they are bounded execution coordination, not durable task storage.
 - GitHub ingestion is synchronous and capped at 100 repositories per request.
 - Newly ingested READMEs become searchable only after the notebook runs.
 - A source-controlled Jobs API definition reproduces the once-daily notebook task, but its committed

@@ -98,6 +98,15 @@ class FakeProjectRepository:
             raise ProjectToolsRepositoryError("database secret")
         return [_listed_project(self.notes)] if self.saved is not None else []
 
+    async def remove_saved_project(self, user_key: str, repo_id: int) -> bool:
+        if self.fail:
+            raise ProjectToolsRepositoryError("database secret")
+        if self.saved is None or repo_id != self.saved.repo_id:
+            return False
+        self.saved = None
+        self.notes.clear()
+        return True
+
     async def get_project_details(
         self, user_key: str, repo_id: int, evidence_limit: int
     ) -> ProjectDetailsRecord | None:
@@ -164,6 +173,7 @@ class FakeCursor:
         self.rows = rows
         self.batches = batches or []
         self.statements: list[str] = []
+        self.parameters: list[object] = []
 
     async def __aenter__(self) -> "FakeCursor":
         return self
@@ -173,6 +183,7 @@ class FakeCursor:
 
     async def execute(self, query: str, parameters: object) -> None:
         self.statements.append(query)
+        self.parameters.append(parameters)
 
     async def fetchone(self) -> dict[str, object] | None:
         return self.rows.pop(0)
@@ -234,11 +245,20 @@ class FakeRetrieval:
 
 class FakeProjectService:
     def __init__(self) -> None:
-        self.saved = _saved()
+        self.saved: SavedProjectRecord | None = _saved()
         self.notes: list[ProjectNoteRecord] = []
+        self.fail_removal = False
 
     async def list_saved_projects(self, user_key: str) -> list[SavedProjectListRecord]:
-        return [_listed_project(self.notes)]
+        return [_listed_project(self.notes)] if self.saved is not None else []
+
+    async def remove_saved_project(self, user_key: str, repo_id: int) -> None:
+        if self.fail_removal:
+            raise ProjectToolsUnavailableError("Unable to remove saved project")
+        if repo_id != 42 or self.saved is None:
+            raise SavedProjectNotFoundError("Saved project not found")
+        self.saved = None
+        self.notes.clear()
 
     async def get_project_details(
         self, user_key: str, repo_id: int, evidence_limit: int
@@ -272,12 +292,14 @@ class FakeProjectService:
     async def save_project(self, user_key: str, repo_id: int) -> SavedProjectRecord:
         if repo_id != 42:
             raise ProjectNotFoundError("Repository not found")
+        if self.saved is None:
+            self.saved = _saved()
         return self.saved
 
     async def update_project_status(
         self, user_key: str, repo_id: int, project_status: ProjectStatus
     ) -> SavedProjectRecord:
-        if repo_id != 42:
+        if repo_id != 42 or self.saved is None:
             raise SavedProjectNotFoundError("Saved project not found")
         self.saved = SavedProjectRecord(
             self.saved.saved_project_id,
@@ -289,7 +311,7 @@ class FakeProjectService:
         return self.saved
 
     async def add_project_note(self, user_key: str, repo_id: int, note: str) -> ProjectNoteRecord:
-        if repo_id != 42:
+        if repo_id != 42 or self.saved is None:
             raise SavedProjectNotFoundError("Saved project not found")
         record = ProjectNoteRecord(uuid4(), note, datetime.now(UTC))
         self.notes.insert(0, record)
@@ -304,6 +326,53 @@ def test_project_state_schema_and_repository_contract_are_bounded_and_idempotent
     assert "ORDER BY chunk_index ASC, chunk_id ASC" in source
     assert "ORDER BY created_at DESC, note_id ASC" in source
     assert "LIMIT 10" in source
+    assert "DELETE FROM saved_projects" in source
+    assert "DELETE FROM project_notes" not in source
+
+
+@pytest.mark.asyncio
+async def test_repository_removes_only_user_scoped_saved_state() -> None:
+    cursor = FakeCursor([{"saved_project_id": uuid4()}])
+    repository = ProjectToolsRepository(
+        cast(ConnectionProvider, FakeDatabase(FakeConnection(cursor)))
+    )
+
+    removed = await repository.remove_saved_project("default", 42)
+
+    assert removed is True
+    assert len(cursor.statements) == 1
+    assert "DELETE FROM saved_projects" in cursor.statements[0]
+    assert "WHERE user_key = %s AND repo_id = %s" in cursor.statements[0]
+    assert "RETURNING saved_project_id" in cursor.statements[0]
+    assert cursor.parameters == [("default", 42)]
+
+    missing = ProjectToolsRepository(
+        cast(ConnectionProvider, FakeDatabase(FakeConnection(FakeCursor([None]))))
+    )
+    assert await missing.remove_saved_project("default", 999) is False
+
+    unavailable = ProjectToolsRepository(cast(ConnectionProvider, FakeDatabase()))
+    with pytest.raises(ProjectToolsRepositoryError, match="Unable to remove saved project"):
+        await unavailable.remove_saved_project("default", 42)
+
+
+@pytest.mark.asyncio
+async def test_service_removal_clears_saved_state_and_notes() -> None:
+    repository = FakeProjectRepository()
+    service = ProjectToolsService(repository)
+    await service.save_project("default", 42)
+    await service.add_project_note("default", 42, "Review orchestration patterns")
+
+    await service.remove_saved_project("default", 42)
+
+    assert repository.saved is None
+    assert repository.notes == []
+    with pytest.raises(SavedProjectNotFoundError):
+        await service.remove_saved_project("default", 42)
+
+    repository.fail = True
+    with pytest.raises(ProjectToolsUnavailableError, match="Unable to remove saved project"):
+        await service.remove_saved_project("default", 42)
 
 
 @pytest.mark.asyncio
@@ -406,9 +475,11 @@ async def test_saved_project_listing_uses_two_bounded_queries_and_safe_failures(
 
 
 @asynccontextmanager
-async def _client() -> AsyncIterator[httpx.AsyncClient]:
+async def _client(
+    project_service: FakeProjectService | None = None,
+) -> AsyncIterator[httpx.AsyncClient]:
     app = create_app(Settings(app_env=AppEnvironment.TEST))
-    project_service = FakeProjectService()
+    project_service = project_service or FakeProjectService()
 
     async def project_override() -> FakeProjectService:
         return project_service
@@ -469,6 +540,62 @@ async def test_browser_saved_projects_endpoint_is_typed_and_read_only() -> None:
     assert response.json()["projects"][0]["full_name"] == "owner/pipeline"
     assert response.json()["projects"][0]["status"] == "INTERESTED"
     assert "saved_project_id" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_browser_saved_project_removal_and_stale_state() -> None:
+    async with _client() as client:
+        note = await client.post(
+            "/api/tools/saved-projects/42/notes",
+            json={"note": "Review orchestration patterns"},
+        )
+        removed = await client.delete("/saved-projects/42")
+        projects = await client.get("/saved-projects")
+        repeated = await client.delete("/saved-projects/42")
+        invalid = await client.delete("/saved-projects/0")
+
+    assert note.status_code == 201
+    assert removed.status_code == 204
+    assert removed.content == b""
+    assert projects.json() == {"projects": []}
+    assert repeated.status_code == 404
+    assert repeated.json() == {"detail": "Saved project not found"}
+    assert invalid.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_browser_saved_project_removal_database_failure_is_safe() -> None:
+    service = FakeProjectService()
+    service.fail_removal = True
+
+    async with _client(service) as client:
+        response = await client.delete("/saved-projects/42")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Unable to remove saved project"}
+    assert "database secret" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_browser_saved_project_removal_missing_dependency_is_safe() -> None:
+    app = create_app(Settings(app_env=AppEnvironment.TEST))
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            response = await client.delete("/saved-projects/42")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Project tool dependencies are unavailable"}
+
+
+def test_browser_removal_is_not_exposed_to_machine_tools() -> None:
+    app = create_app(Settings(app_env=AppEnvironment.TEST))
+    schema = app.openapi()
+
+    assert "delete" in schema["paths"]["/saved-projects/{repo_id}"]
+    assert "/api/tools/saved-projects/{repo_id}" in schema["paths"]
+    assert "delete" not in schema["paths"]["/api/tools/saved-projects/{repo_id}"]
 
 
 @pytest.mark.asyncio

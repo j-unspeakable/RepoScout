@@ -71,6 +71,7 @@ async def test_frontend_files_and_api_routes_remain_available(
     assert "/indexing-requests" in schema.json()["paths"]
     assert "/assistant/messages" in schema.json()["paths"]
     assert "/saved-projects" in schema.json()["paths"]
+    assert "delete" in schema.json()["paths"]["/saved-projects/{repo_id}"]
     assert health.json() == {"status": "ok", "environment": "test"}
 
 
@@ -82,13 +83,15 @@ def test_frontend_uses_one_proxy_safe_application_base() -> None:
 
     assert script.count('const APPLICATION_BASE_URL = new URL("./", document.baseURI);') == 1
     assert "return new URL(relativePath, APPLICATION_BASE_URL);" in script
-    assert "fetch(apiUrl(relativePath)" in script
+    assert "fetch(apiUrl(relativePath), options)" in script
     assert script.count("fetch(") == 1
     assert 'apiRequest("corpus/summary")' in script
     assert 'apiRequest("indexing-requests"' in script
     assert 'apiRequest("search/semantic"' in script
-    assert 'apiRequest("assistant/messages"' in script
+    assert 'apiFetch("assistant/messages/stream"' in script
+    assert "assistant/turns/${encodeURIComponent(turnId)}/cancel" in script
     assert 'apiRequest("saved-projects"' in script
+    assert "apiRequest(`saved-projects/${encodeURIComponent(current.repoId)}`" in script
     assert 'endpoint: "search/ask"' not in script
     assert "setupDiscoverSearch" in script
     assert "setupSearchMode" not in script
@@ -124,7 +127,10 @@ def test_frontend_contract_is_safe_accessible_and_self_contained() -> None:
     assert 'aria-label="Primary navigation"' in page
     assert 'class="cancel-button"' in page
     assert "Searching repositories…" in script
-    assert "This may take several seconds…" in script
+    assert "Working through your request…" in script
+    assert "Searching projects…" in script
+    assert "Saving projects…" in script
+    assert "Adding notes…" in script
     assert "AbortController" in script
     assert "noopener noreferrer" in script
     assert 'url.hostname.toLowerCase() === "github.com"' in script
@@ -180,7 +186,8 @@ def test_frontend_contract_is_safe_accessible_and_self_contained() -> None:
     assert "have README content available" in script
     assert "could not currently be retrieved" in script
     assert "retrieval_status" not in script
-    assert 'element("span", "rank-badge", String(project.rank ?? "—"))' in script
+    assert "showRank && Number.isInteger(project.rank)" in script
+    assert 'element("span", "rank-badge", String(project.rank))' in script
     assert "`#${project.rank" not in script
 
 
@@ -240,6 +247,7 @@ def test_agent_chat_and_my_projects_frontend_contract() -> None:
     assert "CHAT_SESSION_KEY" in script
     assert "conversation_id: chatState.conversationId" in script
     assert "response.message.content" in script
+    assert "response.message.presentation" in script
     assert "response.message.evidence" in script
     assert "response.output" not in script
     assert "tool_calls" not in script
@@ -248,10 +256,16 @@ def test_agent_chat_and_my_projects_frontend_contract() -> None:
     assert "MCP" not in page
     assert "UNCERTAIN_COMPLETION_MESSAGE" in script
     assert "CANCELLED_COMPLETION_MESSAGE" in script
+    assert "SAFE_CANCELLATION_MESSAGE" in script
     assert "Stopped waiting. If this request included saving a project" in script
     assert "Check My Projects before retrying" in script
     assert "setTimeout" not in script
     assert "typing-indicator" in styles
+    assert "chat-progress-copy" in styles
+    assert "ASSISTANT_PROGRESS_COPY" in script
+    assert 'cancellation?.outcome === "cancelled"' in script
+    assert 'cancellation?.outcome === "completed"' in script
+    assert "activeController.abort()" in script
     assert "chat-transcript" in styles
     assert "chat-action-slot" in styles
     assert (
@@ -266,20 +280,51 @@ def test_agent_chat_and_my_projects_frontend_contract() -> None:
     assert "evidence-based details or comparisons" in script
     assert "Interested, To Try, In Progress, or Completed" in script
     assert "createChatOnboardingMessage" in script
-    assert "createChatEvidence" in script
+    assert "createChatProjectCards" in script
+    assert "createChatProjectReferences" in script
+    assert '"Referenced projects"' in script
+    assert 'presentation === "cards"' in script
+    assert 'presentation === "references"' in script
+    assert "alignLatestAssistantStart: true" in script
+    assert '".chat-message.is-assistant:not(.is-pending)"' in script
+    assert '["cards", "references", "text"]' in script
+    assert "createProjectCard(project, citationTargets" in script
+    assert script.index("renderAnswerBody(body, message.content") < script.index(
+        "body.append(projectCards)"
+    )
+    assert "showRank: false" in script
+    assert "showActionSlot: false" in script
     assert "normalizeAnswerMarkdown" in script
-    assert "createChatEvidenceGroup" in script
-    assert "chatEvidenceHost" in script
-    assert "placeChatEvidence" in script
+    assert "createChatEvidenceGroup" not in script
+    assert "chatEvidenceHost" not in script
+    assert "placeChatEvidence" not in script
     assert 'element("summary", "", "Why this matched")' in script
     assert "Supporting README evidence" not in script
     assert "validStoredAssistantEvidenceProject" in script
-    assert "chat-evidence-group" in styles
+    assert "chat-project-grid" in styles
+    assert "chat-project-references" in styles
+    assert "chat-project-reference-link" in styles
+    assert (
+        ".chat-message.is-assistant:not(.is-onboarding):not(.is-pending) {\n"
+        "  width: 100%;\n"
+        "  max-width: 100%;"
+    ) in styles
+    assert ".chat-project-references {\n  display: grid;" in styles
+    assert "padding: 12px 3px 3px;" in styles
+    assert ".chat-project-reference-list li {\n  min-width: 0;" in styles
+    assert ".chat-message-body .chat-project-reference-list li + li {\n  margin-top: 0;" in styles
+    assert "overflow-wrap: anywhere" in styles
     assert "chat-evidence-fallback" not in styles
-    chat_evidence_source = script[
-        script.index("function createChatEvidence") : script.index("function createChatMessage")
-    ]
-    assert "similarity" not in chat_evidence_source
+    assert "readmeMatchStrength" in script
+    assert "README match: ${strength}" in script
+    assert 'return "Strong"' in script
+    assert 'return "Moderate"' in script
+    assert 'return "Limited"' in script
+    assert "Based on semantic similarity between your request and the indexed README." in script
+    assert "percentage" not in script.lower()
+    assert "probability" not in script.lower()
+    assert "confidence" not in script.lower()
+    assert "readme-match" in styles
     assert "visibleMessages.length === 0" in script
     assert "fragment.append(createChatOnboardingMessage())" in script
     assert "message: CHAT_ONBOARDING_MESSAGE" not in script
@@ -290,7 +335,10 @@ def test_agent_chat_and_my_projects_frontend_contract() -> None:
     assert "form.requestSubmit()" in script
     assert "Math.min(query.scrollHeight, MAX_CHAT_COMPOSER_HEIGHT)" in script
     assert "restoreDraft(message)" in script
-    assert "requestActive || chatState.blocked" in script
+    assert "query.disabled = chatState.blocked" in script
+    assert "query.disabled = requestActive || chatState.blocked" not in script
+    assert "hasMessage && !requestActive && !chatState.blocked" in script
+    assert "if (!query.value.trim())" in script
     assert "restart.hidden = !chatState.blocked" in script
     assert 'restart.addEventListener("click", resetChatConversation)' in script
     assert "scrollChatToLatest" in script
@@ -305,3 +353,51 @@ def test_agent_chat_and_my_projects_frontend_contract() -> None:
     assert "text-transform" not in speaker_rule.group("body")
     assert "saved-project-card" in script
     assert "project-notes" in styles
+    assert 'id="remove-saved-project-dialog"' in page
+    assert 'aria-labelledby="remove-saved-project-title"' in page
+    assert 'aria-describedby="remove-saved-project-description"' in page
+    assert "Remove from My Projects?" in page
+    assert "Any RepoScout notes saved with it will also be permanently removed." in page
+    assert "searchable index will not be affected" in page
+    assert page.index('id="remove-saved-project-cancel"') < page.index(
+        'id="remove-saved-project-confirm"'
+    )
+    assert "data-remove-saved-project" in script
+    assert "dialog.showModal()" in script
+    assert script.index("dialog.showModal()") < script.index('method: "DELETE"')
+    assert 'method: "DELETE"' in script
+    assert "if (error instanceof ApiError && error.status === 404)" in script
+    assert "This project was already removed from My Projects." in script
+    assert "Do not retry" not in script
+    assert "showSavedProjectsEmptyState(results)" in script
+    assert ".remove-saved-project-button" in styles
+    assert ".remove-saved-project-button {\n  border-color: var(--accent-border);" in styles
+    assert ".confirmation-dialog" in styles
+    assert ".confirmation-dialog::backdrop" in styles
+    assert 'class="confirmation-button"' in page
+    assert ".confirmation-button {" in styles
+    assert "border: 1px solid var(--accent);" in styles
+    assert "background: var(--accent);" in styles
+    assert (
+        ".dialog-status {\n  min-height: 24px;\n  margin-top: 16px;\n  color: var(--accent);"
+        in styles
+    )
+    assert ".dialog-status.is-error {\n  color: var(--error-text);" in styles
+    assert 'dialogStatus.classList.remove("is-error")' in script
+    assert 'dialogStatus.classList.add("is-error")' in script
+    assert "--destructive-contrast" not in styles
+    assert 'dialog.addEventListener("cancel"' in script
+
+
+def test_api_request_accepts_successful_empty_responses() -> None:
+    script = (FRONTEND_ROOT / "assets" / "app.js").read_text()
+
+    parse_start = script.index("async function apiRequest")
+    parse_end = script.index("function parseSseEvent", parse_start)
+    api_request = script[parse_start:parse_end]
+
+    assert "let payload = null;" in api_request
+    assert "payload = await response.json();" in api_request
+    assert "catch" in api_request
+    assert "if (!response.ok)" in api_request
+    assert "return payload;" in api_request

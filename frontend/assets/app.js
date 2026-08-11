@@ -6,6 +6,17 @@ const UNCERTAIN_COMPLETION_MESSAGE =
   "RepoScout couldn't confirm the final response. A requested action may already have completed. Check My Projects before retrying.";
 const CANCELLED_COMPLETION_MESSAGE =
   "Stopped waiting. If this request included saving a project, changing its status, or adding a note, that action may already have completed. Check My Projects before retrying.";
+const SAFE_CANCELLATION_MESSAGE = "Stopped. No project changes were started.";
+const ASSISTANT_PROGRESS_COPY = Object.freeze({
+  working: "Working through your request…",
+  searching_projects: "Searching projects…",
+  reviewing_details: "Reviewing project details…",
+  saving_projects: "Saving projects…",
+  updating_status: "Updating project status…",
+  adding_notes: "Adding notes…",
+  continuing: "Continuing your request…",
+  finishing: "Finishing up…",
+});
 const CHAT_ONBOARDING_MESSAGE = `Welcome to RepoScout. I can help you discover open-source GitHub projects and work with the evidence in their indexed README documentation.
 
 - Search for projects using a natural-language goal, then ask for evidence-based details or comparisons.
@@ -38,6 +49,10 @@ function apiUrl(relativePath) {
   return new URL(relativePath, APPLICATION_BASE_URL);
 }
 
+function apiFetch(relativePath, options = {}) {
+  return fetch(apiUrl(relativePath), options);
+}
+
 async function apiRequest(relativePath, options = {}) {
   const headers = new Headers(options.headers);
   headers.set("Accept", "application/json");
@@ -45,7 +60,7 @@ async function apiRequest(relativePath, options = {}) {
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await fetch(apiUrl(relativePath), { ...options, headers });
+  const response = await apiFetch(relativePath, { ...options, headers });
   let payload = null;
   try {
     payload = await response.json();
@@ -64,6 +79,109 @@ async function apiRequest(relativePath, options = {}) {
     );
   }
   return payload;
+}
+
+function parseSseEvent(frame) {
+  let eventName = "message";
+  const dataLines = [];
+  for (const line of frame.split(/\r?\n/)) {
+    if (line.startsWith(":")) {
+      continue;
+    }
+    if (line.startsWith("event:")) {
+      eventName = line.slice(6).trim();
+    } else if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).trimStart());
+    }
+  }
+  if (dataLines.length === 0) {
+    return null;
+  }
+  try {
+    return { event: eventName, data: JSON.parse(dataLines.join("\n")) };
+  } catch {
+    throw new ApiError(502, "RepoScout returned an invalid progress response", null, true);
+  }
+}
+
+async function assistantStreamRequest(payload, { signal, onProgress }) {
+  const response = await apiFetch("assistant/messages/stream", {
+    method: "POST",
+    headers: {
+      Accept: "text/event-stream",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+    signal,
+  });
+  if (!response.ok) {
+    let detail = null;
+    try {
+      detail = (await response.json())?.detail ?? null;
+    } catch {
+      // The status remains sufficient for safe public error mapping.
+    }
+    throw new ApiError(
+      response.status,
+      detail,
+      response.headers.get("Retry-After"),
+      response.headers.get("X-RepoScout-Completion") === "uncertain",
+    );
+  }
+  if (!response.body) {
+    throw new ApiError(502, "RepoScout progress is unavailable", null, true);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+      let boundary = buffer.match(/\r?\n\r?\n/);
+      while (boundary && boundary.index !== undefined) {
+        const frame = buffer.slice(0, boundary.index);
+        buffer = buffer.slice(boundary.index + boundary[0].length);
+        const parsed = parseSseEvent(frame);
+        if (parsed?.event === "progress") {
+          if (typeof parsed.data?.phase !== "string" || !(parsed.data.phase in ASSISTANT_PROGRESS_COPY)) {
+            throw new ApiError(502, "RepoScout returned invalid progress", null, true);
+          }
+          onProgress(parsed.data.phase);
+        } else if (parsed?.event === "result") {
+          return parsed.data;
+        } else if (parsed?.event === "error") {
+          throw new ApiError(
+            Number(parsed.data?.status) || 502,
+            typeof parsed.data?.detail === "string" ? parsed.data.detail : null,
+            parsed.data?.retry_after ? String(parsed.data.retry_after) : null,
+            parsed.data?.uncertain === true,
+          );
+        } else if (parsed !== null) {
+          throw new ApiError(502, "RepoScout returned an unknown progress event", null, true);
+        }
+        boundary = buffer.match(/\r?\n\r?\n/);
+      }
+      if (done) {
+        break;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  throw new ApiError(502, "RepoScout could not confirm the final response", null, true);
+}
+
+function createTurnId() {
+  if (typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function element(tagName, className = "", text = "") {
@@ -412,16 +530,50 @@ function evidenceDomId(project, chunk) {
   return `evidence-${project.repo_id}-${chunk.chunk_index}`;
 }
 
-function createProjectCard(project, citationTargets) {
+function readmeMatchStrength(similarity) {
+  if (!Number.isFinite(similarity) || similarity < 0.25 || similarity > 1) {
+    return null;
+  }
+  if (similarity >= 0.6) {
+    return "Strong";
+  }
+  if (similarity >= 0.45) {
+    return "Moderate";
+  }
+  return "Limited";
+}
+
+function createReadmeMatchIndicator(similarity) {
+  const strength = readmeMatchStrength(similarity);
+  if (strength === null) {
+    return null;
+  }
+  const indicator = element("div", "readme-match");
+  indicator.append(
+    element("span", "readme-match-label", `README match: ${strength}`),
+    element(
+      "span",
+      "readme-match-context",
+      "Based on semantic similarity between your request and the indexed README.",
+    ),
+  );
+  return indicator;
+}
+
+function createProjectCard(
+  project,
+  citationTargets,
+  { showRank = true, showActionSlot = true, evidenceIdPrefix = "" } = {},
+) {
   const card = element("article", "project-card is-entering");
   card.dataset.repoId = String(project.repo_id ?? "");
 
   const header = element("div", "project-header");
   const titleWrap = element("div", "project-title-wrap");
-  titleWrap.append(
-    element("span", "rank-badge", String(project.rank ?? "—")),
-    element("h3", "", project.full_name || project.name || "Unnamed repository"),
-  );
+  if (showRank && Number.isInteger(project.rank) && project.rank > 0) {
+    titleWrap.append(element("span", "rank-badge", String(project.rank)));
+  }
+  titleWrap.append(element("h3", "", project.full_name || project.name || "Unnamed repository"));
   header.append(titleWrap);
 
   const githubUrl = safeGitHubUrl(project.html_url);
@@ -446,12 +598,18 @@ function createProjectCard(project, citationTargets) {
   if (project.primary_language) {
     metadata.append(metadataChip(project.primary_language));
   }
-  metadata.append(metadataChip(`★ ${formatCount(project.stars)} stars`));
-  metadata.append(metadataChip(`${formatCount(project.forks)} forks`));
+  if (Number.isInteger(project.stars) && project.stars >= 0) {
+    metadata.append(metadataChip(`★ ${formatCount(project.stars)} stars`));
+  }
+  if (Number.isInteger(project.forks) && project.forks >= 0) {
+    metadata.append(metadataChip(`${formatCount(project.forks)} forks`));
+  }
   if (project.license) {
     metadata.append(metadataChip(project.license));
   }
-  card.append(metadata);
+  if (metadata.childElementCount > 0) {
+    card.append(metadata);
+  }
 
   if (Array.isArray(project.topics) && project.topics.length > 0) {
     const topics = element("div", "topic-list");
@@ -461,16 +619,23 @@ function createProjectCard(project, citationTargets) {
     card.append(topics);
   }
 
-  card.append(element("div", "project-action-slot"));
+  if (showActionSlot) {
+    card.append(element("div", "project-action-slot"));
+  }
 
   if (Array.isArray(project.evidence) && project.evidence.length > 0) {
     const details = element("details", "evidence-group");
     details.append(element("summary", "", "Why this matched"));
     const list = element("div", "evidence-list");
+    const matchIndicator = createReadmeMatchIndicator(project.similarity);
+    if (matchIndicator) {
+      list.append(matchIndicator);
+    }
 
     for (const chunk of project.evidence) {
       const evidence = element("div", "evidence-chunk", chunk.chunk_text || "Evidence unavailable.");
-      evidence.id = evidenceDomId(project, chunk);
+      const baseId = evidenceDomId(project, chunk);
+      evidence.id = evidenceIdPrefix ? `${evidenceIdPrefix}-${baseId}` : baseId;
       evidence.setAttribute("tabindex", "-1");
       list.append(evidence);
 
@@ -534,10 +699,7 @@ function normalizeAnswerMarkdown(answer) {
       /\]\s+\((https:\/\/github\.com\/[^)\s]+)\)/g,
       "]($1)",
     )
-    .replace(
-      /(\]\(https:\/\/github\.com\/[^)\s]+\))\s*\r?\n\s*(\(repo_id\s*:\s*\d+\))/gi,
-      "$1 $2",
-    );
+    .replace(/\s*\(repo_id\s*:\s*\d+\)/gi, "");
 }
 
 function renderAnswerBody(container, answer, citationTargets) {
@@ -624,6 +786,9 @@ const chatState = {
 };
 
 function validStoredChatMessage(value) {
+  const validPresentation =
+    value?.presentation === undefined ||
+    ["cards", "references", "text"].includes(value.presentation);
   const validEvidence =
     value?.evidence === undefined ||
     (Array.isArray(value.evidence) &&
@@ -636,11 +801,18 @@ function validStoredChatMessage(value) {
     typeof value.content === "string" &&
     value.content.trim().length > 0 &&
     value.content.length <= (value.role === "user" ? 2000 : 20000) &&
+    (value.role === "assistant" ? validPresentation : value.presentation === undefined) &&
     (value.role === "assistant" ? validEvidence : value.evidence === undefined)
   );
 }
 
 function validStoredAssistantEvidenceProject(project) {
+  const validOptionalText = (value, maximum) =>
+    value === undefined || value === null || (typeof value === "string" && value.length <= maximum);
+  const validOptionalCount = (value) =>
+    value === undefined || (Number.isInteger(value) && value >= 0);
+  const validOptionalSimilarity = (value) =>
+    value === undefined || value === null || (Number.isFinite(value) && value >= -1 && value <= 1);
   return (
     project !== null &&
     typeof project === "object" &&
@@ -649,6 +821,19 @@ function validStoredAssistantEvidenceProject(project) {
     typeof project.full_name === "string" &&
     project.full_name.length > 0 &&
     project.full_name.length <= 200 &&
+    validOptionalText(project.name, 200) &&
+    validOptionalText(project.owner, 200) &&
+    validOptionalText(project.description, 2000) &&
+    validOptionalText(project.primary_language, 100) &&
+    validOptionalText(project.license, 100) &&
+    validOptionalCount(project.stars) &&
+    validOptionalCount(project.forks) &&
+    validOptionalCount(project.open_issues) &&
+    validOptionalSimilarity(project.similarity) &&
+    (project.topics === undefined ||
+      (Array.isArray(project.topics) &&
+        project.topics.length <= 8 &&
+        project.topics.every((topic) => typeof topic === "string" && topic.length <= 100))) &&
     safeGitHubUrl(project.html_url) !== null &&
     Array.isArray(project.evidence) &&
     project.evidence.length <= 5 &&
@@ -660,7 +845,8 @@ function validStoredAssistantEvidenceProject(project) {
         chunk.chunk_index >= 0 &&
         typeof chunk.chunk_text === "string" &&
         chunk.chunk_text.trim().length > 0 &&
-        chunk.chunk_text.length <= 4000,
+        chunk.chunk_text.length <= 4000 &&
+        validOptionalSimilarity(chunk.similarity),
     )
   );
 }
@@ -702,62 +888,60 @@ function persistChatSession() {
   }
 }
 
-function createChatEvidenceGroup(project, citationTargets, messageIndex) {
-  const details = element("details", "evidence-group chat-evidence-group");
-  details.append(element("summary", "", "Why this matched"));
-  const list = element("div", "evidence-list");
-  for (const chunk of project.evidence) {
-    const evidence = element("div", "evidence-chunk", chunk.chunk_text);
-    evidence.id = `chat-evidence-${messageIndex}-${project.repo_id}-${chunk.chunk_index}`;
-    evidence.setAttribute("tabindex", "-1");
-    list.append(evidence);
-    citationTargets.set(`[${project.full_name}#chunk-${chunk.chunk_index}]`, {
-      details,
-      evidence,
-    });
+function createChatProjectCards(evidenceProjects, citationTargets, messageIndex) {
+  if (!Array.isArray(evidenceProjects) || evidenceProjects.length === 0) {
+    return null;
   }
-  details.append(list);
-  return details;
-}
-
-function chatEvidenceHost(body, project) {
-  const fullName = project.full_name.toLocaleLowerCase();
-  const expectedUrl = safeGitHubUrl(project.html_url)?.href;
-  const repositoryIdPattern = new RegExp(`\\brepo[_\\s-]*id\\s*[:=]\\s*${project.repo_id}\\b`, "i");
-  for (const candidate of body.querySelectorAll("ol > li, p, h4")) {
-    const text = candidate.textContent.toLocaleLowerCase();
-    const hasRepositoryLink = Array.from(candidate.querySelectorAll("a.answer-link")).some(
-      (link) => safeGitHubUrl(link.href)?.href === expectedUrl,
+  const cards = element("div", "chat-project-grid");
+  for (const project of evidenceProjects) {
+    cards.append(
+      createProjectCard(project, citationTargets, {
+        showRank: false,
+        showActionSlot: false,
+        evidenceIdPrefix: `chat-${messageIndex}`,
+      }),
     );
-    if (hasRepositoryLink || text.includes(fullName) || repositoryIdPattern.test(text)) {
-      return candidate;
-    }
   }
-  return null;
+  return cards;
 }
 
-function placeChatEvidence(body, evidenceGroups) {
-  for (const { project, details } of evidenceGroups) {
-    const host = chatEvidenceHost(body, project);
-    if (!host) {
+function chatPresentation(message) {
+  if (["cards", "references", "text"].includes(message.presentation)) {
+    return message.presentation;
+  }
+  return Array.isArray(message.evidence) && message.evidence.length > 0 ? "cards" : "text";
+}
+
+function createChatProjectReferences(evidenceProjects) {
+  if (!Array.isArray(evidenceProjects) || evidenceProjects.length === 0) {
+    return null;
+  }
+  const references = element("div", "chat-project-references");
+  references.append(element("span", "chat-project-references-label", "Referenced projects"));
+  const list = element("ul", "chat-project-reference-list");
+  const seenRepoIds = new Set();
+  for (const project of evidenceProjects) {
+    if (seenRepoIds.has(project.repo_id)) {
       continue;
     }
-    if (host.matches("li")) {
-      host.append(details);
-    } else {
-      host.after(details);
+    const githubUrl = safeGitHubUrl(project.html_url);
+    if (!githubUrl) {
+      continue;
     }
+    seenRepoIds.add(project.repo_id);
+    const item = element("li");
+    const link = element("a", "chat-project-reference-link", `${project.full_name} ↗`);
+    link.href = githubUrl.href;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    item.append(link);
+    list.append(item);
   }
-}
-
-function createChatEvidence(evidenceProjects, citationTargets, messageIndex) {
-  if (!Array.isArray(evidenceProjects) || evidenceProjects.length === 0) {
-    return [];
+  if (list.childElementCount === 0) {
+    return null;
   }
-  return evidenceProjects.map((project) => ({
-    project,
-    details: createChatEvidenceGroup(project, citationTargets, messageIndex),
-  }));
+  references.append(list);
+  return references;
 }
 
 function createChatMessage(message, animate = false, messageIndex = 0) {
@@ -768,10 +952,21 @@ function createChatMessage(message, animate = false, messageIndex = 0) {
   item.append(element("span", "chat-speaker", message.role === "user" ? "You" : "RepoScout"));
   const body = element("div", "chat-message-body");
   if (message.role === "assistant") {
+    const presentation = chatPresentation(message);
     const citationTargets = new Map();
-    const evidenceGroups = createChatEvidence(message.evidence, citationTargets, messageIndex);
+    const projectCards =
+      presentation === "cards"
+        ? createChatProjectCards(message.evidence, citationTargets, messageIndex)
+        : null;
+    const projectReferences =
+      presentation === "references" ? createChatProjectReferences(message.evidence) : null;
     renderAnswerBody(body, message.content, citationTargets);
-    placeChatEvidence(body, evidenceGroups);
+    if (projectCards) {
+      body.append(projectCards);
+    }
+    if (projectReferences) {
+      body.append(projectReferences);
+    }
   } else {
     body.append(element("p", "", message.content));
   }
@@ -789,36 +984,70 @@ function createChatOnboardingMessage() {
   return item;
 }
 
-function createChatLoadingMessage() {
+function createChatLoadingMessage(progressPhase = "working") {
   const item = element("article", "chat-message is-assistant is-pending");
   item.setAttribute("aria-label", "RepoScout is working");
   item.append(element("span", "chat-speaker", "RepoScout"));
-  const dots = element("div", "typing-indicator");
+  const indicator = element("div", "typing-indicator");
+  const dots = element("span", "typing-dots");
+  dots.setAttribute("aria-hidden", "true");
   for (let index = 0; index < 3; index += 1) {
     dots.append(element("span"));
   }
-  item.append(dots);
+  const copy = element(
+    "span",
+    "chat-progress-copy",
+    ASSISTANT_PROGRESS_COPY[progressPhase] ?? ASSISTANT_PROGRESS_COPY.working,
+  );
+  copy.setAttribute("role", "status");
+  copy.setAttribute("aria-live", "polite");
+  copy.setAttribute("aria-atomic", "true");
+  indicator.append(dots, copy);
+  item.append(indicator);
   return item;
+}
+
+function updateChatProgress(progressPhase, customCopy = null) {
+  const copy = document.querySelector(".chat-progress-copy");
+  if (!copy) {
+    return;
+  }
+  copy.textContent = customCopy ?? ASSISTANT_PROGRESS_COPY[progressPhase] ?? ASSISTANT_PROGRESS_COPY.working;
 }
 
 function prefersReducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-function scrollChatToLatest(startAtTop = false) {
+function scrollChatToLatest(startAtTop = false, alignLatestAssistantStart = false) {
   const transcript = document.querySelector("#ask-transcript");
   if (!transcript) {
     return;
   }
   window.requestAnimationFrame(() => {
+    let top = startAtTop ? 0 : transcript.scrollHeight;
+    if (alignLatestAssistantStart) {
+      const assistantMessages = transcript.querySelectorAll(
+        ".chat-message.is-assistant:not(.is-pending)",
+      );
+      const latest = assistantMessages.item(assistantMessages.length - 1);
+      if (latest) {
+        const transcriptRect = transcript.getBoundingClientRect();
+        const messageRect = latest.getBoundingClientRect();
+        top = transcript.scrollTop + messageRect.top - transcriptRect.top - 12;
+      }
+    }
     transcript.scrollTo({
-      top: startAtTop ? 0 : transcript.scrollHeight,
+      top,
       behavior: prefersReducedMotion() ? "auto" : "smooth",
     });
   });
 }
 
-function renderChatTranscript(pendingUserMessage = null, { animateTail = 0 } = {}) {
+function renderChatTranscript(
+  pendingUserMessage = null,
+  { animateTail = 0, progressPhase = "working", alignLatestAssistantStart = false } = {},
+) {
   const transcript = document.querySelector("#ask-transcript");
   const fragment = document.createDocumentFragment();
   const visibleMessages = [...chatState.messages];
@@ -834,10 +1063,10 @@ function renderChatTranscript(pendingUserMessage = null, { animateTail = 0 } = {
     }
   }
   if (pendingUserMessage) {
-    fragment.append(createChatLoadingMessage());
+    fragment.append(createChatLoadingMessage(progressPhase));
   }
   transcript.replaceChildren(fragment);
-  scrollChatToLatest(visibleMessages.length === 0);
+  scrollChatToLatest(visibleMessages.length === 0, alignLatestAssistantStart);
 }
 
 function resetChatConversation() {
@@ -876,6 +1105,12 @@ function assistantErrorMessage(error) {
   if (error instanceof ApiError && !error.uncertain && error.status === 503) {
     return "Ask RepoScout is temporarily unavailable. Discover is still available.";
   }
+  if (error instanceof ApiError && !error.uncertain && error.status === 504) {
+    return "Ask RepoScout timed out before any project changes started. You can try again.";
+  }
+  if (error instanceof ApiError && !error.uncertain && error.status === 502) {
+    return "Ask RepoScout could not complete the request. You can try again.";
+  }
   return UNCERTAIN_COMPLETION_MESSAGE;
 }
 
@@ -888,6 +1123,8 @@ function setupAssistantChat() {
   const reset = document.querySelector("#new-conversation");
   const restart = document.querySelector("#chat-restart");
   let controller = null;
+  let activeTurnId = null;
+  let cancellationPromise = null;
   let composing = false;
   let requestActive = false;
 
@@ -904,14 +1141,16 @@ function setupAssistantChat() {
     send.hidden = !canSend;
     send.disabled = !canSend;
     stop.hidden = !requestActive;
-    query.disabled = requestActive || chatState.blocked;
+    query.disabled = chatState.blocked;
     reset.disabled = requestActive;
     restart.hidden = !chatState.blocked;
     form.setAttribute("aria-busy", String(requestActive));
   }
 
   function restoreDraft(message) {
-    query.value = message;
+    if (!query.value.trim()) {
+      query.value = message;
+    }
     resizeComposer();
   }
 
@@ -921,7 +1160,20 @@ function setupAssistantChat() {
   syncComposerControls();
   reset.addEventListener("click", resetChatConversation);
   restart.addEventListener("click", resetChatConversation);
-  stop.addEventListener("click", () => controller?.abort());
+  stop.addEventListener("click", () => {
+    if (!controller || !activeTurnId || cancellationPromise) {
+      return;
+    }
+    stop.disabled = true;
+    updateChatProgress("working", "Stopping…");
+    const activeController = controller;
+    const turnId = activeTurnId;
+    cancellationPromise = apiRequest(`assistant/turns/${encodeURIComponent(turnId)}/cancel`, {
+      method: "POST",
+    })
+      .catch(() => ({ outcome: "uncertain", result: null }))
+      .finally(() => activeController.abort());
+  });
   query.addEventListener("input", () => {
     resizeComposer();
     syncComposerControls();
@@ -975,48 +1227,80 @@ function setupAssistantChat() {
     }
 
     controller = new AbortController();
+    activeTurnId = createTurnId();
+    cancellationPromise = null;
     requestActive = true;
     query.value = "";
     resizeComposer();
     syncComposerControls();
     renderChatTranscript(message, { animateTail: 1 });
-    setStatus(status, "RepoScout is working through your request. This may take several seconds…");
+    setStatus(status, "");
 
-    try {
-      const response = await apiRequest("assistant/messages", {
-        method: "POST",
-        body: JSON.stringify({
-          conversation_id: chatState.conversationId,
-          message,
-        }),
-        signal: controller.signal,
-      });
+    function acceptResponse(response) {
       chatState.conversationId = response.conversation_id;
       chatState.messages.push(
         { role: "user", content: message },
         {
           role: "assistant",
           content: response.message.content,
+          presentation: ["cards", "references", "text"].includes(
+            response.message.presentation,
+          )
+            ? response.message.presentation
+            : Array.isArray(response.message.evidence) && response.message.evidence.length > 0
+              ? "cards"
+              : "text",
           evidence: Array.isArray(response.message.evidence) ? response.message.evidence : [],
         },
       );
       chatState.messages = chatState.messages.slice(-MAX_VISIBLE_CHAT_MESSAGES);
       persistChatSession();
-      renderChatTranscript(null, { animateTail: 2 });
+      renderChatTranscript(null, { animateTail: 2, alignLatestAssistantStart: true });
       setStatus(status, "");
+    }
+
+    try {
+      const response = await assistantStreamRequest(
+        {
+          turn_id: activeTurnId,
+          conversation_id: chatState.conversationId,
+          message,
+        },
+        {
+          signal: controller.signal,
+          onProgress: (phase) => updateChatProgress(phase),
+        },
+      );
+      acceptResponse(response);
     } catch (error) {
       renderChatTranscript();
       restoreDraft(message);
-      const cancelled = error instanceof DOMException && error.name === "AbortError";
+      const stopped = cancellationPromise !== null;
+      const cancellation = stopped ? await cancellationPromise : null;
+      if (cancellation?.outcome === "completed" && cancellation.result) {
+        acceptResponse(cancellation.result);
+        return;
+      }
+      const safelyCancelled = cancellation?.outcome === "cancelled";
+      const uncertainCancellation = stopped && !safelyCancelled;
       const uncertain =
-        cancelled || !(error instanceof ApiError) || error.uncertain;
+        uncertainCancellation || (!stopped && !(error instanceof ApiError)) || error?.uncertain;
       if (uncertain || (error instanceof ApiError && error.status === 410)) {
         chatState.blocked = true;
       }
-      setStatus(status, cancelled ? CANCELLED_COMPLETION_MESSAGE : assistantErrorMessage(error), "error");
+      if (safelyCancelled) {
+        setStatus(status, SAFE_CANCELLATION_MESSAGE, "cancelled");
+      } else if (uncertainCancellation) {
+        setStatus(status, CANCELLED_COMPLETION_MESSAGE, "error");
+      } else {
+        setStatus(status, assistantErrorMessage(error), "error");
+      }
     } finally {
       controller = null;
+      activeTurnId = null;
+      cancellationPromise = null;
       requestActive = false;
+      stop.disabled = false;
       resizeComposer();
       syncComposerControls();
       if (chatState.blocked) {
@@ -1104,10 +1388,37 @@ function createSavedProjectCard(project) {
   } else {
     card.append(element("p", "project-notes-empty", "No notes yet."));
   }
+
+  const actions = element("div", "saved-project-actions");
+  const remove = element(
+    "button",
+    "secondary-button remove-saved-project-button",
+    "Remove from My Projects",
+  );
+  remove.type = "button";
+  remove.dataset.removeSavedProject = "";
+  remove.setAttribute(
+    "aria-label",
+    `Remove ${project.full_name || project.name || "this project"} from My Projects`,
+  );
+  actions.append(remove);
+  card.append(actions);
   return card;
 }
 
 let projectsController = null;
+
+function showSavedProjectsEmptyState(results) {
+  const empty = element("div", "empty-panel");
+  empty.append(
+    element("h3", "", "No saved projects yet"),
+    element("p", "", "Ask RepoScout to find a project, then tell it to save your choice."),
+  );
+  const link = element("a", "secondary-button", "Ask RepoScout");
+  link.href = "#ask";
+  empty.append(link);
+  results.replaceChildren(empty);
+}
 
 async function loadSavedProjects() {
   if (projectsController !== null) {
@@ -1124,15 +1435,7 @@ async function loadSavedProjects() {
     const response = await apiRequest("saved-projects", { signal: projectsController.signal });
     const projects = Array.isArray(response.projects) ? response.projects : [];
     if (projects.length === 0) {
-      const empty = element("div", "empty-panel");
-      empty.append(
-        element("h3", "", "No saved projects yet"),
-        element("p", "", "Ask RepoScout to find a project, then tell it to save your choice."),
-      );
-      const link = element("a", "secondary-button", "Ask RepoScout");
-      link.href = "#ask";
-      empty.append(link);
-      results.replaceChildren(empty);
+      showSavedProjectsEmptyState(results);
     } else {
       const fragment = document.createDocumentFragment();
       for (const project of projects) {
@@ -1151,6 +1454,127 @@ async function loadSavedProjects() {
     refresh.disabled = false;
     results.setAttribute("aria-busy", "false");
   }
+}
+
+function setupSavedProjectRemoval() {
+  const dialog = document.querySelector("#remove-saved-project-dialog");
+  const projectName = document.querySelector("#remove-saved-project-name");
+  const dialogStatus = document.querySelector("#remove-saved-project-status");
+  const cancel = document.querySelector("#remove-saved-project-cancel");
+  const confirm = document.querySelector("#remove-saved-project-confirm");
+  const confirmLabel = confirm.querySelector(".button-label");
+  const results = document.querySelector("#projects-results");
+  const projectsStatus = document.querySelector("#projects-status");
+  const projectsTitle = document.querySelector("#projects-title");
+  let selection = null;
+  let removing = false;
+
+  function setRemoving(active) {
+    removing = active;
+    cancel.disabled = active;
+    confirm.disabled = active;
+    confirm.classList.toggle("is-loading", active);
+    confirmLabel.textContent = active ? "Removing…" : "Remove from My Projects";
+    dialog.setAttribute("aria-busy", String(active));
+  }
+
+  function resetDialog() {
+    selection = null;
+    projectName.textContent = "";
+    dialogStatus.textContent = "";
+    dialogStatus.classList.remove("is-error");
+    setRemoving(false);
+  }
+
+  function focusAfterRemoval(card) {
+    const cards = [...results.querySelectorAll(".saved-project-card")];
+    const index = cards.indexOf(card);
+    const adjacent = cards[index + 1] ?? cards[index - 1] ?? null;
+    const target = adjacent?.querySelector(".remove-saved-project-button") ?? projectsTitle;
+    window.requestAnimationFrame(() => target.focus({ preventScroll: true }));
+  }
+
+  function reconcileRemoval(card, message) {
+    focusAfterRemoval(card);
+    card.remove();
+    if (!results.querySelector(".saved-project-card")) {
+      showSavedProjectsEmptyState(results);
+    }
+    dialog.close("removed");
+    setStatus(projectsStatus, message, "success");
+  }
+
+  results.addEventListener("click", (event) => {
+    const trigger = event.target.closest?.("[data-remove-saved-project]");
+    if (!trigger || removing) {
+      return;
+    }
+    const card = trigger.closest(".saved-project-card");
+    const repoId = Number(card?.dataset.repoId);
+    const fullName = card?.querySelector("h3")?.textContent?.trim();
+    if (!card || !Number.isInteger(repoId) || repoId < 1 || !fullName) {
+      return;
+    }
+    selection = { card, fullName, repoId, trigger };
+    projectName.textContent = fullName;
+    dialogStatus.textContent = "";
+    dialogStatus.classList.remove("is-error");
+    setStatus(projectsStatus, "");
+    dialog.showModal();
+    cancel.focus({ preventScroll: true });
+  });
+
+  cancel.addEventListener("click", () => {
+    if (!removing) {
+      dialog.close("cancelled");
+    }
+  });
+
+  dialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    if (!removing) {
+      dialog.close("cancelled");
+    }
+  });
+
+  dialog.addEventListener("close", () => {
+    const trigger = selection?.trigger;
+    const restoreTrigger = dialog.returnValue === "cancelled" && trigger?.isConnected;
+    resetDialog();
+    if (restoreTrigger) {
+      trigger.focus({ preventScroll: true });
+    }
+  });
+
+  confirm.addEventListener("click", async () => {
+    if (!selection || removing) {
+      return;
+    }
+    const current = selection;
+    setRemoving(true);
+    dialogStatus.classList.remove("is-error");
+    dialogStatus.textContent = "Removing saved project and its notes…";
+    try {
+      await apiRequest(`saved-projects/${encodeURIComponent(current.repoId)}`, {
+        method: "DELETE",
+      });
+      reconcileRemoval(
+        current.card,
+        `${current.fullName} was removed from My Projects with its saved notes.`,
+      );
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        reconcileRemoval(current.card, "This project was already removed from My Projects.");
+        return;
+      }
+      dialogStatus.classList.add("is-error");
+      dialogStatus.textContent = friendlyError(error);
+    } finally {
+      if (dialog.open) {
+        setRemoving(false);
+      }
+    }
+  });
 }
 
 function activeSearchQuery() {
@@ -1370,4 +1794,5 @@ setupExampleQueries();
 setupIndexingRequest();
 setupAssistantChat();
 setupDiscoverSearch();
+setupSavedProjectRemoval();
 loadCorpusSummary();

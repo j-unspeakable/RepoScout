@@ -27,3 +27,5 @@ env:
     valueFrom: supervisor_endpoint
   - name: SUPERVISOR_REQUEST_TIMEOUT_SECONDS
     value: "120"
+  - name: SUPERVISOR_TASK_TIMEOUT_SECONDS
+    value: "300"

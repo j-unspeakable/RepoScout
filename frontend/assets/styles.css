@@ -39,6 +39,7 @@
   --spinner-track: rgb(3 17 14 / 26%);
   --success-text: #a7f3d0;
   --error-text: #fecdd3;
+  --dialog-backdrop: rgb(0 0 0 / 68%);
   --skeleton-base: #172723;
   --skeleton-highlight: #223a34;
   --metric-skeleton-highlight: #20342f;
@@ -99,6 +100,7 @@
   --spinner-track: rgb(255 255 255 / 42%);
   --success-text: #166534;
   --error-text: #8f1d35;
+  --dialog-backdrop: rgb(16 35 30 / 42%);
   --skeleton-base: #e5eeeb;
   --skeleton-highlight: #cdded9;
   --metric-skeleton-highlight: #d6e5e0;
@@ -598,6 +600,11 @@ main {
   justify-self: start;
 }
 
+.chat-message.is-assistant:not(.is-onboarding):not(.is-pending) {
+  width: 100%;
+  max-width: 100%;
+}
+
 .chat-speaker {
   color: var(--muted);
   font-size: 0.72rem;
@@ -660,40 +667,97 @@ main {
   margin-top: 8px;
 }
 
-.chat-evidence-group {
-  margin-top: 12px;
+.chat-project-grid {
+  display: grid;
+  margin-top: 16px;
+  gap: 14px;
 }
 
-.chat-message-body .chat-evidence-group {
-  margin-top: 10px;
-  border-top: 0;
-}
-
-.chat-message-body .chat-evidence-group summary {
-  padding: 7px 0 0;
-  color: var(--accent);
-  font-size: 0.78rem;
-}
-
-.chat-evidence-group summary {
-  overflow-wrap: anywhere;
-}
-
-.chat-evidence-group .evidence-chunk {
+.chat-project-grid .project-card {
+  padding: 18px;
   background: var(--surface);
+  box-shadow: none;
+}
+
+.chat-project-grid .project-card:hover {
+  background: var(--surface);
+  transform: none;
+}
+
+.chat-project-references {
+  display: grid;
+  min-width: 0;
+  margin-top: 15px;
+  padding: 12px 3px 3px;
+  border-top: 1px solid var(--border);
+  gap: 8px;
+}
+
+.chat-project-references-label {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 760;
+}
+
+.chat-project-reference-list {
+  display: flex;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  list-style: none;
+}
+
+.chat-project-reference-list li {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.chat-message-body .chat-project-reference-list li + li {
+  margin-top: 0;
+}
+
+.chat-project-reference-link {
+  display: inline-flex;
+  max-width: 100%;
+  padding: 5px 9px;
+  border: 1px solid var(--accent-border);
+  border-radius: 999px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: 0.76rem;
+  font-weight: 720;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+
+.chat-project-reference-link:hover {
+  border-color: var(--accent-hover);
+  color: var(--text);
 }
 
 .typing-indicator {
   display: flex;
-  width: max-content;
+  width: fit-content;
+  max-width: min(100%, 560px);
   padding: 14px 16px;
   border: 1px solid var(--border);
   border-radius: 6px 16px 16px;
+  align-items: center;
   gap: 6px;
   background: var(--raised);
 }
 
-.typing-indicator span {
+.typing-dots {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.typing-dots > span {
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -701,12 +765,19 @@ main {
   animation: typing-bounce 1s ease-in-out infinite;
 }
 
-.typing-indicator span:nth-child(2) {
+.typing-dots > span:nth-child(2) {
   animation-delay: 140ms;
 }
 
-.typing-indicator span:nth-child(3) {
+.typing-dots > span:nth-child(3) {
   animation-delay: 280ms;
+}
+
+.chat-progress-copy {
+  margin-left: 4px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
 }
 
 .chat-composer-form {
@@ -874,6 +945,113 @@ main {
 .secondary-button:disabled {
   cursor: wait;
   opacity: 0.58;
+}
+
+.saved-project-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.remove-saved-project-button {
+  border-color: var(--accent-border);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.remove-saved-project-button:hover:not(:disabled) {
+  border-color: var(--accent-border-strong);
+  color: var(--text);
+  background: var(--accent-tint-hover);
+}
+
+.confirmation-dialog {
+  width: min(500px, calc(100% - 32px));
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  color: var(--text);
+  background: var(--raised);
+  box-shadow: var(--shadow);
+}
+
+.confirmation-dialog::backdrop {
+  background: var(--dialog-backdrop);
+  backdrop-filter: blur(3px);
+}
+
+.confirmation-dialog-content {
+  padding: 26px;
+}
+
+.confirmation-dialog h2 {
+  margin: 0 0 14px;
+  font-size: 1.35rem;
+  letter-spacing: -0.025em;
+}
+
+.confirmation-dialog p:not(.section-kicker) {
+  margin: 0;
+  color: var(--muted-strong);
+  line-height: 1.6;
+}
+
+.confirmation-dialog-reassurance {
+  margin-top: 12px !important;
+  color: var(--muted) !important;
+  font-size: 0.88rem;
+}
+
+.dialog-status {
+  min-height: 24px;
+  margin-top: 16px;
+  color: var(--accent);
+  font-size: 0.86rem;
+}
+
+.dialog-status.is-error {
+  color: var(--error-text);
+}
+
+.confirmation-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20px;
+  gap: 10px;
+}
+
+.confirmation-button {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  padding: 9px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 9px;
+  gap: 8px;
+  color: var(--control-contrast);
+  background: var(--accent);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 760;
+  cursor: pointer;
+}
+
+.confirmation-button:hover:not(:disabled) {
+  border-color: var(--control-hover);
+  background: var(--control-hover);
+}
+
+.confirmation-button:disabled {
+  cursor: wait;
+  opacity: 0.76;
+}
+
+.confirmation-button .spinner {
+  border-color: var(--spinner-track);
+  border-top-color: var(--control-contrast);
 }
 
 .saved-project-dates,
@@ -1467,6 +1645,26 @@ textarea[aria-invalid="true"] {
   gap: 10px;
 }
 
+.readme-match {
+  display: grid;
+  padding: 10px 12px;
+  border: 1px solid var(--accent-border-subtle);
+  border-radius: 9px;
+  gap: 3px;
+  background: var(--accent-soft);
+}
+
+.readme-match-label {
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.readme-match-context {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
 .evidence-chunk {
   padding: 14px;
   border-left: 2px solid var(--border-strong);
@@ -1673,6 +1871,16 @@ textarea[aria-invalid="true"] {
 
   .saved-project-card .github-link {
     margin-left: 0;
+  }
+
+  .saved-project-actions,
+  .confirmation-dialog-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .confirmation-dialog-content {
+    padding: 21px;
   }
 
   .chat-message {

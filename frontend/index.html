@@ -276,7 +276,7 @@
         >
           <div class="projects-toolbar">
             <div>
-              <h3 id="projects-title">My Projects</h3>
+              <h3 id="projects-title" tabindex="-1">My Projects</h3>
               <p>Projects you asked RepoScout to save, with their current status and notes.</p>
             </div>
             <button id="projects-refresh" class="secondary-button" type="button">Refresh</button>
@@ -361,5 +361,39 @@
         GitHub repositories.
       </p>
     </footer>
+
+    <dialog
+      id="remove-saved-project-dialog"
+      class="confirmation-dialog"
+      aria-labelledby="remove-saved-project-title"
+      aria-describedby="remove-saved-project-description"
+    >
+      <div class="confirmation-dialog-content">
+        <p class="section-kicker">Saved project</p>
+        <h2 id="remove-saved-project-title">Remove from My Projects?</h2>
+        <p id="remove-saved-project-description">
+          <strong id="remove-saved-project-name"></strong> will be removed from My Projects.
+          Any RepoScout notes saved with it will also be permanently removed.
+        </p>
+        <p class="confirmation-dialog-reassurance">
+          The GitHub repository and RepoScout's searchable index will not be affected.
+        </p>
+        <div
+          id="remove-saved-project-status"
+          class="dialog-status"
+          role="status"
+          aria-live="polite"
+        ></div>
+        <div class="confirmation-dialog-actions">
+          <button id="remove-saved-project-cancel" class="secondary-button" type="button">
+            Cancel
+          </button>
+          <button id="remove-saved-project-confirm" class="confirmation-button" type="button">
+            <span class="button-label">Remove from My Projects</span>
+            <span class="spinner" aria-hidden="true"></span>
+          </button>
+        </div>
+      </div>
+    </dialog>
   </body>
 </html>

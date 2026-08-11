@@ -34,6 +34,14 @@ class ProjectToolsService:
         except ProjectToolsRepositoryError as exc:
             raise ProjectToolsUnavailableError("Saved projects unavailable") from exc
 
+    async def remove_saved_project(self, user_key: str, repo_id: int) -> None:
+        try:
+            removed = await self._repository.remove_saved_project(user_key, repo_id)
+        except ProjectToolsRepositoryError as exc:
+            raise ProjectToolsUnavailableError("Unable to remove saved project") from exc
+        if not removed:
+            raise SavedProjectNotFoundError("Saved project not found")
+
     async def get_project_details(
         self, user_key: str, repo_id: int, evidence_limit: int
     ) -> ProjectDetailsRecord:
