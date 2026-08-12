@@ -59,7 +59,9 @@ The implementation deliberately separates deterministic retrieval from agent orc
 
 ### Demo video
 
-[Watch the RepoScout end-to-end demo on Loom](https://www.loom.com/share/c6988910aa8448a69f779d4d5f8f22d4).
+[Watch the RepoScout end-to-end demo on Loom](https://www.loom.com/share/e239a2b9cba546d58a11cd245d8cd7de).
+
+Please excuse the narration quality; I was recovering from a nasty cold when I recorded the demo.
 
 The walkthrough demonstrates repository discovery, evidence-backed recommendations, conversational
 follow-ups, saved-project actions, and project organization in My Projects.
@@ -723,7 +725,7 @@ handles bounded approval and continuation rounds only for the five allowlisted R
 and applies a five-minute overall deadline in addition to the per-cycle timeout. Both the JSON and
 SSE endpoints use this same execution engine and commit a conversation turn only after a validated
 complete response. The browser receives the final assistant text, sanitized display evidence for
-the current turn, and an opaque conversation ID—never the response-item history itself.
+the current turn, and an opaque conversation ID, but never the response-item history itself.
 
 The normal Ask UI consumes native FastAPI SSE. Progress labels such as **Searching projects…**,
 **Saving projects…**, and **Adding notes…** are projected from validated allowlisted activity and
